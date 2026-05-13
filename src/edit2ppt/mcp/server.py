@@ -17,9 +17,9 @@ import binascii
 import uuid
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 
-from ..db.models import AssetKind
+from ..db.models import Asset, AssetKind
 from ..services.assets import (
     AssetError,
     UploadResult,
@@ -29,7 +29,12 @@ from ..services.assets import (
     get_asset,
     upload_asset,
 )
-from ..db.models import Asset
+from ..tools import (
+    ConvertRequest,
+    GenerateDeckRequest,
+    StageEvent,
+    generate_deck,
+)
 from . import catalog
 from .context import MCPContext, get_default_context
 
@@ -219,6 +224,132 @@ def build_mcp_server(context: MCPContext | None = None) -> FastMCP:
                 "created_at": asset.created_at.isoformat(),
             }
 
+    # ---- High-level tool ------------------------------------------------
+
+    @mcp.tool(
+        name="generate_deck",
+        description=(
+            "Generate an editable Korean-first PPTX from previously uploaded "
+            "sources. Returns `{ pptx_asset_id, page_count, spec_lock, "
+            "detected_langs, design_spec }` on success. Pass the resulting "
+            "pptx_asset_id to `download_url` to get a signed download link. "
+            "Progress is streamed back to the agent as MCP progress "
+            "notifications (stage + percent complete). "
+            "Requires BYOK: provide your Anthropic API key in "
+            "`anthropic_api_key`; we use it for this call only and never "
+            "persist it. "
+            "Korean (ko-KR) is the default language; pass `lang` to switch."
+        ),
+    )
+    async def generate_deck_tool(
+        source_asset_ids: list[str],
+        user_intent: str,
+        anthropic_api_key: str,
+        target_min_pages: int = 8,
+        target_max_pages: int = 12,
+        lang: str = "ko-KR",
+        style: str = "general",
+        template_name: str | None = None,
+        canvas_format: str = "ppt169",
+        model: str = "claude-opus-4-7",
+        output_basename: str = "deck",
+        mcp_ctx: Context | None = None,
+    ) -> dict[str, Any]:
+        if not source_asset_ids:
+            raise AssetError("source_asset_ids must contain at least one id.")
+        if not anthropic_api_key:
+            raise AssetError(
+                "anthropic_api_key is required. Pass it on this call only — "
+                "edit2ppt never persists BYOK keys."
+            )
+
+        try:
+            asset_uuids = [uuid.UUID(s) for s in source_asset_ids]
+        except ValueError as exc:
+            raise AssetError(f"source_asset_ids must be valid UUIDs: {exc}") from exc
+
+        async with ctx_provider.scope() as scope:
+            # 1. Resolve source assets to ConvertRequests.
+            convert_reqs: list[ConvertRequest] = []
+            for aid in asset_uuids:
+                asset = await get_asset(
+                    session=scope.session, tenant=scope.tenant, asset_id=aid
+                )
+                content = await scope.storage.get_bytes(asset.storage_key)
+                convert_reqs.append(
+                    ConvertRequest(
+                        source_type=_infer_source_type(asset.mime_type),
+                        content=content,
+                        original_filename=asset.original_filename,
+                    )
+                )
+
+            # 2. Stream stage events back as MCP progress notifications.
+            seen_stages: list[str] = []
+
+            async def on_event(event: StageEvent) -> None:
+                seen_stages.append(event.stage)
+                if mcp_ctx is None:
+                    return
+                try:
+                    await mcp_ctx.report_progress(
+                        progress=event.progress,
+                        total=1.0,
+                        message=event.stage,
+                    )
+                except Exception:
+                    # Progress channel failures must not fail the job.
+                    pass
+
+            # 3. Run the orchestrator.
+            deck_resp = await generate_deck(
+                GenerateDeckRequest(
+                    sources=convert_reqs,
+                    user_intent=user_intent,
+                    target_pages=(target_min_pages, target_max_pages),
+                    canvas_format=canvas_format,
+                    style=style,  # type: ignore[arg-type]
+                    lang=lang,  # type: ignore[arg-type]
+                    template_name=template_name,
+                    model=model,
+                    anthropic_api_key=anthropic_api_key,
+                    fail_on_quality_error=False,
+                ),
+                on_event=on_event,
+            )
+
+            # 4. Persist the PPTX as a new asset.
+            pptx_upload = await upload_asset(
+                session=scope.session,
+                storage=scope.storage,
+                tenant=scope.tenant,
+                kind=AssetKind.pptx,
+                content=deck_resp.pptx,
+                original_filename=f"{output_basename}.pptx",
+                mime_type=(
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                ),
+            )
+
+            return {
+                "pptx_asset_id": str(pptx_upload.asset.id),
+                "page_count": deck_resp.page_count,
+                "spec_lock": deck_resp.spec_lock,
+                "design_spec": deck_resp.design_spec,
+                "detected_langs": list(deck_resp.detected_langs),
+                "stages_seen": seen_stages,
+                "cost": {
+                    "input_tokens": deck_resp.cost.input_tokens,
+                    "output_tokens": deck_resp.cost.output_tokens,
+                    "cache_read_tokens": deck_resp.cost.cache_read_tokens,
+                    "cache_write_tokens": deck_resp.cost.cache_write_tokens,
+                    "duration_seconds": deck_resp.cost.duration_seconds,
+                },
+                "warnings": [
+                    {"code": w.code, "message": w.message} for w in deck_resp.warnings
+                ],
+            }
+
     @mcp.tool(
         name="download_url",
         description=(
@@ -251,6 +382,20 @@ def build_mcp_server(context: MCPContext | None = None) -> FastMCP:
             }
 
     return mcp
+
+
+def _infer_source_type(mime_type: str | None) -> str:
+    return {
+        "application/pdf": "pdf",
+        "application/msword": "doc",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+        "application/vnd.ms-excel.sheet.macroenabled.12": "xlsm",
+        "text/html": "html",
+        "application/epub+zip": "epub",
+        "application/x-ipynb+json": "ipynb",
+    }.get(mime_type or "", "pdf")
 
 
 __all__ = ["build_mcp_server"]
