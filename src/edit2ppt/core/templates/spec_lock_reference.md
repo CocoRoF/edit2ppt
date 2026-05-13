@@ -126,3 +126,105 @@
 - `<style>`, `class`, `<foreignObject>`, `textPath`, `@font-face`, `<animate*>`, `<script>`, `<iframe>`, `<symbol>`+`<use>`
 - `<g opacity>` (set opacity on each child element individually)
 - HTML named entities in text (`&nbsp;`, `&mdash;`, `&copy;`, `&ndash;`, `&reg;`, `&hellip;`, `&bull;` …) — write as raw Unicode (`—`, `©`, `→`, NBSP, etc.); XML reserved chars `& < > " '` must be escaped as `&amp; &lt; &gt; &quot; &apos;`. See shared-standards.md §1.0
+
+---
+
+## Appendix K. Korean (ko-KR) spec_lock examples
+
+Paste-ready blocks for Korean decks. **Track A reminder**: all keys in this
+YAML stay English (`typography:`, `colors:`, `pages:`); only the *values*
+adopt Korean copy when the deck language is ko-KR.
+
+### K.1 Minimal Korean spec_lock
+
+```yaml
+lang: ko-KR
+canvas_format: ppt169
+style: general
+
+typography:
+  body_stack: '"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif'
+  title_stack: '"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif'
+  body_size: 20
+  title_size: 40
+  letter_spacing_body: '-0.02em'
+  letter_spacing_title: '-0.03em'
+  line_height_body: 1.6
+  line_height_title: 1.25
+  font_style: normal   # Hangul never italicizes
+
+colors:
+  primary: '#0064FF'
+  secondary: '#F5F6F7'
+  accent: '#FF0066'
+  text: '#161616'
+  background: '#FFFFFF'
+
+pages:
+  - id: cover
+    title: '2026년 3분기 영업 결과'         # Korean value
+    subtitle: '임원 보고서'                  # Korean value
+  - id: summary
+    title: '한 페이지 요약'                  # Korean value
+    bullets:
+      - '매출 3,420억 원 (전년 동기 대비 12% 증가)'
+      - '가전 부문이 성장 견인'
+      - '비용 효율 +1.5%p'
+```
+
+### K.2 Korean consulting spec_lock (top-tier register)
+
+```yaml
+lang: ko-KR
+canvas_format: ppt169
+style: consultant-top
+
+typography:
+  body_stack: '"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif'
+  title_stack: '"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif'
+  body_size: 18    # 18pt minimum for top-tier consulting
+  title_size: 44
+  weight_body: 400
+  weight_argument: 700
+  weight_answer: 900
+  font_style: normal
+
+colors:
+  primary: '#0F2A47'      # slate-navy
+  secondary: '#7A8AA0'
+  accent: '#C8102E'       # consulting red — sparing use
+  text: '#1A1A1A'
+  background: '#FFFFFF'
+
+footer:
+  confidentiality: '대외비'   # or '내부용'
+
+structure:
+  - 표지
+  - 요약               # one-page exec summary (mandatory for Korean execs)
+  - 목차
+  - 본문
+  - 부록
+
+pages:
+  - id: answer_page_1
+    answer: 'Q3 성장은 가전이 견인했으며, 공급망 안정이 핵심 동력입니다'
+    arguments:
+      - '신흥시장 매출 +18%'
+      - '가전 GP +2.5%p'
+      - '재고 회전 25% 개선'
+```
+
+### K.3 Mandatory rules for Korean spec_lock
+
+1. `lang: ko-KR` MUST be the first key. The Executor reads this and
+   re-asserts the Output Language directive on every page call.
+2. Font stacks MUST include `"Malgun Gothic"` as the Windows-safe
+   fallback (last position).
+3. `font_style: normal` — never `italic`.
+4. `letter_spacing_body: '-0.02em'` recommended for any Hangul deck;
+   tighten further for headlines.
+5. Color hex values are uppercase ASCII; never localize to color names.
+6. All keys in this YAML stay English. All `title:` / `subtitle:` /
+   `bullets:` / `answer:` / `arguments:` / `attribution:` *values* are
+   Korean.
