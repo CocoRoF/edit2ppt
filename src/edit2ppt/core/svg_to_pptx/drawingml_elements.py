@@ -17,6 +17,7 @@ from .drawingml_utils import (
     rect_to_dml_xfrm,
     parse_hex_color, resolve_url_id, get_effective_filter_id,
     parse_font_family, is_cjk_char, estimate_text_width,
+    detect_lang,
     _xml_escape,
 )
 from .drawingml_styles import (
@@ -998,8 +999,15 @@ def _build_run_xml(
 
     space_attr = ' xml:space="preserve"' if text != text.strip() or '  ' in text else ''
 
+    # G2: detect language from text content; honor explicit ctx.lang if set.
+    run_lang = run.get('lang')
+    if not run_lang and ctx is not None:
+        run_lang = getattr(ctx, 'default_lang', None)
+    if not run_lang:
+        run_lang = detect_lang(text, default="en-US")
+
     return f'''<a:r>
-<a:rPr lang="zh-CN" sz="{sz}"{b_attr}{i_attr}{u_attr}{strike_attr} dirty="0">
+<a:rPr lang="{run_lang}" sz="{sz}"{b_attr}{i_attr}{u_attr}{strike_attr} dirty="0">
 {outline_xml}
 {fill_xml}
 {effect_xml}

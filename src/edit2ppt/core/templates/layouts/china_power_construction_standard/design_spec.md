@@ -8,7 +8,7 @@
 
 | Property       | Description                                                      |
 | -------------- | ---------------------------------------------------------------- |
-| **Template Name** | 中国电建_常规 (formerly powerchina)                           |
+| **Template Name** | china_power_construction_standard (formerly powerchina)                           |
 | **Use Cases**  | Engineering project reports, technical proposal presentations, business negotiations, corporate promotion, annual summaries |
 | **Design Tone** | Professional, composed, international, state-owned enterprise style |
 | **Theme Mode** | Light theme (white background + POWERCHINA blue accent)          |

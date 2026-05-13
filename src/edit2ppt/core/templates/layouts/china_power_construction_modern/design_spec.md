@@ -9,7 +9,7 @@
 
 | Property       | Description                                                      |
 | -------------- | ---------------------------------------------------------------- |
-| **Template Name** | 中国电建_现代 (formerly powerchina_v2)                        |
+| **Template Name** | china_power_construction_modern (formerly powerchina_v2)                        |
 | **Use Cases**  | Major engineering reports, international market promotion, technology achievement showcases, high-end business negotiations |
 | **Design Tone** | **Grand narrative, modern precision, digital tech, international vision** |
 | **Theme Mode** | Deep blue tech gradient + precision grid texture                 |

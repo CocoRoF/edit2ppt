@@ -48,9 +48,16 @@ EA_FONTS = {
     'Yu Gothic', 'Yu Gothic UI', 'Yu Mincho',
     'Meiryo', 'Meiryo UI', 'メイリオ',
     'MS Gothic', 'MS Mincho', 'MS PGothic', 'MS PMincho', 'MS UI Gothic',
-    # Korean
-    'Malgun Gothic', 'Gulim', 'Dotum', 'Batang',
-    'Noto Sans KR', 'Noto Serif KR',
+    # Korean (G3 expanded)
+    'Malgun Gothic', 'Gulim', 'Dotum', 'Batang', 'BatangChe', 'GulimChe', 'DotumChe', 'GungsuhChe',
+    'Noto Sans KR', 'Noto Serif KR', 'Noto Sans CJK KR', 'Noto Serif CJK KR',
+    'Apple SD Gothic Neo', 'Apple SD산돌고딕 Neo',
+    'Pretendard', 'Pretendard Variable',
+    'Spoqa Han Sans', 'Spoqa Han Sans Neo',
+    'Nanum Gothic', 'Nanum Myeongjo', 'Nanum Barun Gothic', 'Nanum Square',
+    'NanumGothic', 'NanumMyeongjo',
+    'Source Han Sans KR', 'Source Han Serif KR',
+    'IBM Plex Sans KR', 'IBM Plex Serif KR',
 }
 SYSTEM_FONTS = {'system-ui', '-apple-system', 'BlinkMacSystemFont'}
 
@@ -86,6 +93,19 @@ FONT_FALLBACK_WIN = {
     'Source Han Serif JP': 'Noto Serif JP',
     'WenQuanYi Micro Hei': 'Microsoft YaHei',
     'WenQuanYi Zen Hei': 'Microsoft YaHei',
+    # Korean: macOS-only / web fonts -> Windows-available equivalents (G3)
+    'Apple SD Gothic Neo': 'Malgun Gothic',
+    'Apple SD산돌고딕 Neo': 'Malgun Gothic',
+    'Pretendard': 'Malgun Gothic',
+    'Pretendard Variable': 'Malgun Gothic',
+    'Spoqa Han Sans': 'Malgun Gothic',
+    'Spoqa Han Sans Neo': 'Malgun Gothic',
+    'Source Han Sans KR': 'Malgun Gothic',
+    'Source Han Serif KR': 'Batang',
+    'Noto Sans CJK KR': 'Malgun Gothic',
+    'Noto Serif CJK KR': 'Batang',
+    'Noto Sans KR': 'Malgun Gothic',
+    'Noto Serif KR': 'Batang',
     # Latin fonts (macOS / Linux / Web -> Windows)
     'SF Pro': 'Segoe UI',
     'SF Pro Display': 'Segoe UI',
@@ -425,12 +445,74 @@ def parse_font_family(font_family_str: str) -> dict[str, str]:
 
 
 def is_cjk_char(ch: str) -> bool:
-    """Check if a character is CJK (Chinese/Japanese/Korean)."""
+    """Check if a character is CJK (Chinese/Japanese/Korean).
+
+    Hangul ranges were missing from the original ppt-master implementation,
+    causing estimate_text_width() to under-estimate Korean text widths.
+    See ppt-master-analysis/03-korean-gaps.md G1.
+    """
+    cp = ord(ch)
+    return (
+        # CJK ideographs (Chinese, kanji)
+        0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF or
+        0x2E80 <= cp <= 0x2EFF or 0x3000 <= cp <= 0x303F or
+        0xFF00 <= cp <= 0xFFEF or 0xF900 <= cp <= 0xFAFF or
+        0x20000 <= cp <= 0x2A6DF or
+        # Japanese kana
+        0x3040 <= cp <= 0x309F or 0x30A0 <= cp <= 0x30FF or
+        # Korean Hangul (G1 fix)
+        0xAC00 <= cp <= 0xD7A3 or       # Hangul Syllables
+        0x1100 <= cp <= 0x11FF or       # Hangul Jamo
+        0x3130 <= cp <= 0x318F or       # Hangul Compatibility Jamo
+        0xA960 <= cp <= 0xA97F or       # Hangul Jamo Extended-A
+        0xD7B0 <= cp <= 0xD7FF          # Hangul Jamo Extended-B
+    )
+
+
+def is_hangul_char(ch: str) -> bool:
+    cp = ord(ch)
+    return (0xAC00 <= cp <= 0xD7A3 or 0x1100 <= cp <= 0x11FF or
+            0x3130 <= cp <= 0x318F or 0xA960 <= cp <= 0xA97F or
+            0xD7B0 <= cp <= 0xD7FF)
+
+
+def is_han_char(ch: str) -> bool:
     cp = ord(ch)
     return (0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF or
-            0x2E80 <= cp <= 0x2EFF or 0x3000 <= cp <= 0x303F or
-            0xFF00 <= cp <= 0xFFEF or 0xF900 <= cp <= 0xFAFF or
-            0x20000 <= cp <= 0x2A6DF)
+            0xF900 <= cp <= 0xFAFF or 0x20000 <= cp <= 0x2A6DF)
+
+
+def is_kana_char(ch: str) -> bool:
+    cp = ord(ch)
+    return 0x3040 <= cp <= 0x309F or 0x30A0 <= cp <= 0x30FF
+
+
+def detect_lang(text: str, default: str = "en-US") -> str:
+    """Return a BCP-47 locale code for the dominant script in *text*.
+
+    Priority order: Korean Hangul > Japanese kana > CJK Han ideographs > default.
+    Used to set OOXML `lang` attributes correctly so PowerPoint applies the right
+    proofing/spell-check rules. See ppt-master-analysis/03-korean-gaps.md G2.
+    """
+    if not text:
+        return default
+    has_hangul = False
+    has_kana = False
+    has_han = False
+    for ch in text:
+        if is_hangul_char(ch):
+            has_hangul = True
+        elif is_kana_char(ch):
+            has_kana = True
+        elif is_han_char(ch):
+            has_han = True
+    if has_hangul:
+        return "ko-KR"
+    if has_kana:
+        return "ja-JP"
+    if has_han:
+        return "zh-CN"
+    return default
 
 
 def estimate_text_width(text: str, font_size: float, font_weight: str = '400') -> float:

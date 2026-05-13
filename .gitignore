@@ -169,3 +169,18 @@ PERSONAL_NOTES.md
 # Use cloud sync (iCloud/Dropbox) for backup and multi-device access
 projects/*
 !projects/README.md
+
+# edit2ppt-specific
+.venv/
+.ruff_cache/
+.pytest_cache/
+.pyright/
+.coverage
+htmlcov/
+coverage.xml
+uv.lock
+
+# Local development scratch
+.local/
+tmp/
+

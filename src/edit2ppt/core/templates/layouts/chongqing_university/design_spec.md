@@ -1,4 +1,4 @@
-# Chongqing University (重庆大学) Template - Design Specification
+# Chongqing University (chongqing_university) Template - Design Specification
 
 > A distinctive design blending the layered imagery of the Mountain City with modern academic elegance.
 
@@ -8,7 +8,7 @@
 
 | Property           | Description                                                          |
 | ------------------ | -------------------------------------------------------------------- |
-| **Template Name**  | Chongqing University (重庆大学)                                      |
+| **Template Name**  | Chongqing University (chongqing_university)                                      |
 | **Use Cases**      | Academic defense, research reports, teaching presentations, scholarly exchange |
 | **Design Tone**    | Academically grounded · Mountain City charm · Modern minimalism      |
 | **Design Inspiration** | Chongqing's layered terrain + the gravitas of historic campus buildings + modern academic professionalism |
@@ -168,8 +168,8 @@ Small circle elements representing the nighttime lights of the Mountain City:
 
 | File | Applicable Context | Notes |
 |------|-------------------|-------|
-| `重庆大学logo.png` | Light/white backgrounds | Blue version |
-| `重庆大学logo2.png` | Dark/blue backgrounds | White version |
+| `cqu_logo.png` | Light/white backgrounds | Blue version |
+| `cqu_logo_alt.png` | Dark/blue backgrounds | White version |
 
 **Recommended Logo Sizes**:
 - Cover page: Width 280-320px

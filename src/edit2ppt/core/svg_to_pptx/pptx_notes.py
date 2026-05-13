@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from .drawingml_utils import detect_lang
+
 
 def markdown_to_plain_text(md_content: str) -> str:
     """Convert Markdown notes to plain text for PPTX notes.
@@ -52,12 +54,14 @@ def markdown_to_plain_text(md_content: str) -> str:
     return '\n'.join(result).strip()
 
 
-def create_notes_slide_xml(slide_num: int, notes_text: str) -> str:
+def create_notes_slide_xml(slide_num: int, notes_text: str, lang: str | None = None) -> str:
     """Create notes slide XML.
 
     Args:
         slide_num: Slide number.
         notes_text: Notes text in plain text format.
+        lang: BCP-47 locale (e.g. "ko-KR"). If None, detected from notes_text
+            with "en-US" fallback. See ppt-master-analysis G2.
 
     Returns:
         Notes slide XML string.
@@ -67,22 +71,24 @@ def create_notes_slide_xml(slide_num: int, notes_text: str) -> str:
                   .replace('<', '&lt;')
                   .replace('>', '&gt;'))
 
+    effective_lang = lang or detect_lang(notes_text, default="en-US")
+
     paragraphs: list[str] = []
     for para in notes_text.split('\n'):
         if para.strip():
             paragraphs.append(f'''<a:p>
               <a:r>
-                <a:rPr lang="zh-CN" dirty="0"/>
+                <a:rPr lang="{effective_lang}" dirty="0"/>
                 <a:t>{para}</a:t>
               </a:r>
             </a:p>''')
         else:
-            paragraphs.append('<a:p><a:endParaRPr lang="zh-CN" dirty="0"/></a:p>')
+            paragraphs.append(f'<a:p><a:endParaRPr lang="{effective_lang}" dirty="0"/></a:p>')
 
     paragraphs_xml = (
         '\n            '.join(paragraphs)
         if paragraphs
-        else '<a:p><a:endParaRPr lang="zh-CN" dirty="0"/></a:p>'
+        else f'<a:p><a:endParaRPr lang="{effective_lang}" dirty="0"/></a:p>'
     )
 
     return f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>

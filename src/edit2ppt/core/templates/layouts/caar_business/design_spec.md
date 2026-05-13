@@ -9,7 +9,7 @@
 
 | Property       | Description                                                |
 | -------------- | ---------------------------------------------------------- |
-| **Template Name** | 中汽研_商务 (formerly zhongqiyan_v2)                    |
+| **Template Name** | caar_business (formerly zhongqiyan_v2)                    |
 | **Use Cases**  | Product certification display, evaluation presentations, technology promotion, high-end business reporting |
 | **Design Tone** | **Modern tech, authoritative & professional, composed & grand** |
 | **Theme Mode** | Deep blue tech gradient + clean white content pages         |

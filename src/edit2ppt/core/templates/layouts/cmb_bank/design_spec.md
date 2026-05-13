@@ -4,7 +4,7 @@
 
 | Property | Description |
 | --- | --- |
-| **Template Name** | 招商银行 |
+| **Template Name** | cmb_bank |
 | **Display Name** | China Merchants Bank Transaction Banking Template |
 | **Use Cases** | 交易银行产品介绍、销售收款方案汇报、客户案例拆解、分行培训材料 |
 | **Design Tone** | Brand-consistent, structured, product-focused, refined finance |
@@ -172,14 +172,14 @@ Reference slides read before generation: `1, 2, 3, 4, 6, 9, 11, 13, 16, 18`.
 | --- | --- |
 | `cover_bg.png` | Cover / ending brand background (dark pages) |
 | `logo_white.png` | White brand logo for red and dark pages |
-| `logo_dark.png` | 「招商银行 \| 公司金融」dark logo for light page headers |
+| `logo_dark.png` | 「cmb_bank \| 公司金融」dark logo for light page headers |
 
 ### Optional Assets
 
 | Asset | Purpose |
 | --- | --- |
 | `page_header_bg.png` | Full-page header background reference (red accent + logo) |
-| `logo_crm_banner.png` | 「招商银行 \| CRM 4.0」red banner (product-specific, use when applicable) |
+| `logo_crm_banner.png` | 「cmb_bank \| CRM 4.0」red banner (product-specific, use when applicable) |
 | `ref_content_bg.png` | Content page reference layout (with building illustration, for design reference only) |
 
 ### Usage Rule

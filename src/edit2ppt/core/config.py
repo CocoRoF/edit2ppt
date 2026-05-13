@@ -410,6 +410,49 @@ FONTS = {
     'monospace': "'SF Mono', Monaco, Consolas, 'Liberation Mono', monospace"
 }
 
+# Default sans-serif font stacks per locale (G3 patch).
+# Used when a project's language is known but no font stack is given explicitly.
+# Order: brand-preferred display face -> macOS system -> Windows system -> generic
+# Korean stacks lead with Pretendard (OFL) so embedding is safe; macOS users get
+# Apple SD Gothic Neo; Windows users get Malgun Gothic. Same pattern for others.
+DEFAULT_FONT_STACKS = {
+    'ko-KR': (
+        "'Pretendard', 'Pretendard Variable', "
+        "'Apple SD Gothic Neo', 'Malgun Gothic', "
+        "'Noto Sans KR', 'Spoqa Han Sans Neo', 'Nanum Gothic', sans-serif"
+    ),
+    'en-US': (
+        "'Inter', 'Helvetica Neue', 'Segoe UI', Arial, sans-serif"
+    ),
+    'zh-CN': (
+        "'PingFang SC', 'Microsoft YaHei', "
+        "'Hiragino Sans GB', 'Source Han Sans SC', 'Noto Sans SC', sans-serif"
+    ),
+    'zh-TW': (
+        "'PingFang TC', 'Microsoft JhengHei', "
+        "'Source Han Sans TC', 'Noto Sans TC', sans-serif"
+    ),
+    'ja-JP': (
+        "'Hiragino Sans', 'Yu Gothic', 'Meiryo', "
+        "'Noto Sans JP', 'Source Han Sans JP', sans-serif"
+    ),
+}
+
+
+def default_font_stack(lang: str, fallback: str = 'ko-KR') -> str:
+    """Return the default sans-serif font stack for a BCP-47 locale.
+
+    Falls back to *fallback* locale's stack (default ko-KR) for unknown languages.
+    """
+    if lang in DEFAULT_FONT_STACKS:
+        return DEFAULT_FONT_STACKS[lang]
+    # Try 2-letter prefix match (e.g. "ko" -> "ko-KR")
+    prefix = lang.split('-')[0] if lang else ''
+    for code, stack in DEFAULT_FONT_STACKS.items():
+        if code.startswith(prefix + '-'):
+            return stack
+    return DEFAULT_FONT_STACKS[fallback]
+
 FONT_SIZES = {
     'title_large': 48,
     'title': 36,

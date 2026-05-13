@@ -9,7 +9,7 @@
 
 | Property       | Description                                                |
 | -------------- | ---------------------------------------------------------- |
-| **Template Name** | 中汽研_现代 (CATARC_Modern_Tech)                       |
+| **Template Name** | caar_modern (CATARC_Modern_Tech)                       |
 | **Use Cases**  | Forward-looking technology showcases, strategic releases, high-end business reporting |
 | **Design Tone** | **Futuristic, tech-forward, deep & refined**              |
 | **Theme Mode** | Immersive dark cover/transition pages + clean light-gray content pages |

@@ -24,13 +24,13 @@ Pre-built PPT page layout templates supporting multiple styles and use cases.
 | `medical_university` | General | Medical academic reports, case discussions, research presentations, hospital work reports, medical education and training | `#0066B3` | Professional, rigorous, life-affirming, tech-forward, trustworthy |
 | `pixel_retro` | General | Tech talks, programming tutorials, game introductions, geek-style showcases | `#0D1117` | Retro gaming, neon cyberpunk, geek tech, 8-bit style |
 | `psychology_attachment` | General | Psychotherapy training, academic lectures, counseling case analysis, professional sharing | `#2E5C8E` | Professional, warm, healing, trustworthy |
-| `中国电建_常规` | General | Engineering project reports, technical proposal presentations, business negotiations, corporate promotion, annual summaries | `#00418D` | Professional, composed, international, state-owned enterprise style |
-| `中国电建_现代` | General | Major engineering reports, international market promotion, technology achievement showcases, high-end business negotiations | `#00418D` | Grand narrative, modern precision, digital tech, international vision |
-| `中汽研_商务` | General | Product certification display, evaluation presentations, technology promotion, high-end business reporting | `#003366` | Modern tech, authoritative & professional, composed & grand |
-| `中汽研_常规` | General | Product certification display, evaluation presentations, technology promotion, business visits | `#004098` | Professional, authoritative, trustworthy, consulting style |
-| `中汽研_现代` | General | Forward-looking technology showcases, strategic releases, high-end business reporting | `#001529` | Futuristic, tech-forward, deep & refined |
-| `招商银行` | General | 交易银行产品介绍、销售收款方案汇报、客户案例拆解、分行培训材料 | `#C8152D` | Brand-consistent, structured, product-focused, refined finance |
-| `重庆大学` | General | Academic defense, research reports, teaching presentations, scholarly exchange | `#006BB7` | Academically grounded · Mountain City charm · Modern minimalism |
+| `china_power_construction_standard` | General | Engineering project reports, technical proposal presentations, business negotiations, corporate promotion, annual summaries | `#00418D` | Professional, composed, international, state-owned enterprise style |
+| `china_power_construction_modern` | General | Major engineering reports, international market promotion, technology achievement showcases, high-end business negotiations | `#00418D` | Grand narrative, modern precision, digital tech, international vision |
+| `caar_business` | General | Product certification display, evaluation presentations, technology promotion, high-end business reporting | `#003366` | Modern tech, authoritative & professional, composed & grand |
+| `caar_standard` | General | Product certification display, evaluation presentations, technology promotion, business visits | `#004098` | Professional, authoritative, trustworthy, consulting style |
+| `caar_modern` | General | Forward-looking technology showcases, strategic releases, high-end business reporting | `#001529` | Futuristic, tech-forward, deep & refined |
+| `cmb_bank` | General | 交易银行产品介绍、销售收款方案汇报、客户案例拆解、分行培训材料 | `#C8152D` | Brand-consistent, structured, product-focused, refined finance |
+| `chongqing_university` | General | Academic defense, research reports, teaching presentations, scholarly exchange | `#006BB7` | Academically grounded · Mountain City charm · Modern minimalism |
 <!-- quick-index:end -->
 
 ## Template Categories
@@ -45,12 +45,12 @@ Templates mimicking **specific well-known brands/institutions** with their exclu
 | `google_style` | Google Material Design style, four-color brand identity |
 | `anthropic` | Anthropic AI style, dark tech-forward aesthetic |
 | `china_telecom_template` | China Telecom brand style, red-gray structural header + ribbon footer |
-| `中汽研_常规` | CATARC standard style (v1), suitable for certification and evaluation |
-| `中汽研_商务` | CATARC business style (v2), modern tech business, composed and sophisticated |
-| `中汽研_现代` | CATARC modern style (v3 Future), Future Tech style, deep blue + neon cyan |
-| `中国电建_常规` | PowerChina standard style (v1), suitable for power, energy, and engineering SOEs |
-| `中国电建_现代` | PowerChina modern style (v2), emphasis on grand narrative and digital tech |
-| `招商银行` | China Merchants Bank v2.0, minimalist luxury, borderless open layout |
+| `caar_standard` | CATARC standard style (v1), suitable for certification and evaluation |
+| `caar_business` | CATARC business style (v2), modern tech business, composed and sophisticated |
+| `caar_modern` | CATARC modern style (v3 Future), Future Tech style, deep blue + neon cyan |
+| `china_power_construction_standard` | PowerChina standard style (v1), suitable for power, energy, and engineering SOEs |
+| `china_power_construction_modern` | PowerChina modern style (v2), emphasis on grand narrative and digital tech |
+| `cmb_bank` | China Merchants Bank v2.0, minimalist luxury, borderless open layout |
 
 ### 2. Scenario-Specific Templates
 
@@ -61,7 +61,7 @@ Designed for **specific use cases**, with content structures tailored to scenari
 | `academic_defense` | Academic defense, clear research content hierarchy |
 | `psychology_attachment` | Psychotherapy theme, warm and professional color palette |
 | `medical_university` | Hospital / medical university template, suitable for medical reports |
-| `重庆大学` | Chongqing University template, blending mountain-city layered imagery with modern academic style |
+| `chongqing_university` | Chongqing University template, blending mountain-city layered imagery with modern academic style |
 
 ### 3. Government & Enterprise Templates
 

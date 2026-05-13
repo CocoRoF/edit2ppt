@@ -366,7 +366,7 @@ This section describes downstream reuse. The `Template_Designer` role itself is 
 templates/layouts/
 ├── google_style/      # Google Material Design style
 ├── academic_defense/  # Academic defense style
-└── 招商银行/          # China Merchants Bank brand style
+└── cmb_bank/          # China Merchants Bank brand style
 ```
 
 ---
