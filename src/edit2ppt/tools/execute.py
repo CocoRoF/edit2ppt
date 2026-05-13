@@ -18,7 +18,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from ..llm import AnthropicClient, DEFAULT_MODEL, load_prompt
+from ..llm import AnthropicClient, DEFAULT_MODEL, build_output_lang_directive, load_prompt
 from ..llm.anthropic_client import LLMResult, LLMUsage
 from .strategize import LLMCallable
 from .types import (
@@ -146,14 +146,21 @@ async def execute_batch(
 # ---------------------------------------------------------------------------
 
 def _build_system_prompt(style: ExecutorStyle, lang: LangCode) -> str:
-    base = load_prompt("executor-base", lang)
+    """Stitch the runtime language directive + base executor + style variant.
+
+    All prompts are English single-source (see llm/prompt_loader.py); the
+    directive tells the LLM to emit slide content in *lang* while keeping
+    SVG attribute names / asset filenames / token names English.
+    """
+    directive = build_output_lang_directive(lang)
+    base = load_prompt("executor-base")
     variant_role = {
         "general": "executor-general",
         "consultant": "executor-consultant",
         "consultant-top": "executor-consultant-top",
     }[style]
-    variant = load_prompt(variant_role, lang)
-    return f"{base}\n\n---\n\n{variant}"
+    variant = load_prompt(variant_role)
+    return f"{directive}\n\n---\n\n{base}\n\n---\n\n{variant}"
 
 
 def _build_user_message(req: ExecutePageRequest) -> str:
