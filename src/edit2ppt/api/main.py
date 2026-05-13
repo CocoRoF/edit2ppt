@@ -27,6 +27,7 @@ from ..config import get_settings
 from ..i18n import default_catalog
 from .dependencies import Catalog, RequestLocale
 from .errors import install_error_handlers
+from ..mcp.http_transport import mount_mcp
 from .routes import assets as assets_routes
 from .routes import jobs as jobs_routes
 
@@ -59,6 +60,11 @@ app = FastAPI(
 install_error_handlers(app)
 app.include_router(assets_routes.router)
 app.include_router(jobs_routes.router)
+
+# MCP transports — mounted at /mcp (Streamable HTTP) and /mcp-sse (SSE).
+# Both expose the same FastMCP tool set; agents pick whichever matches their
+# spec version. See docs/mcp-clients.md for Claude Desktop / Cursor setup.
+mount_mcp(app)
 
 
 # ---------------------------------------------------------------------------

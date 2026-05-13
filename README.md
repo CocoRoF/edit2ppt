@@ -46,12 +46,14 @@ See [`ppt-master-analysis/`](./ppt-master-analysis/) for the full design dossier
 
 | Milestone | What works | What's coming |
 |-----------|-----------|---------------|
-| M0 (in progress) | Package skeleton, i18n catalog, FastAPI scaffold, health endpoint | DB + Redis + S3 wiring, docker-compose |
-| M1 (in progress) | Core engine imported, Chinese assets renamed to English, G1/G2/G3 Korean patches applied + 66 unit tests pass | Korean prompt variants |
-| M2 | — | Tool functions + Anthropic SDK (BYOK) |
-| M3 | — | REST API + Job queue + SSE |
-| M4 | — | MCP server (HTTP+SSE) |
-| M5–M7 | — | Korean prompts/templates, multi-tenant ops, branding |
+| M0 | Package skeleton, i18n catalog, FastAPI scaffold, health endpoint, ASCII-paths lint | — |
+| M1 | Core engine in `src/edit2ppt/core/`, Chinese assets renamed to English, G1/G2/G3 Korean Critical patches + 66 unit tests pass | — |
+| M2 | Layer 2 Tool functions (convert/strategize/execute/quality/export/audio) + Anthropic SDK BYOK + 1-shot `generate_deck` orchestrator + 77 tests | — |
+| M3 | `docker-compose.yml` + Postgres/Redis/MinIO + SQLAlchemy + Alembic + S3 storage + Korean filename roundtrip + Asset/Job/SSE endpoints + 119 tests | — |
+| M4 | MCP server (stdio + HTTP+SSE + Streamable HTTP) with `list_templates`, `list_voices`, `upload_source`, `get_asset`, `download_url`, `generate_deck` (with progress notifications) + Claude Desktop / Cursor guide + 149 tests | — |
+| M5 | — | Korean prompts/templates (`*.ko.md`) |
+| M6 | — | Auth / multi-tenant / observability |
+| M7 | — | Korean layout templates + branding |
 
 ## Bilingual conventions (load-bearing)
 
@@ -65,6 +67,28 @@ Two tracks, strictly separated:
 
 Enforced by a pre-commit ASCII lint and a unit test. See
 [`ppt-master-analysis/06-bilingual-conventions.md`](./ppt-master-analysis/06-bilingual-conventions.md).
+
+## Connecting an AI agent via MCP
+
+Once `docker compose up -d` is running and the dev server is up, agents
+(Claude Desktop, Cursor, etc.) can connect over either transport.
+
+**Local stdio** — agent launches edit2ppt as a subprocess:
+
+```json
+{
+  "mcpServers": {
+    "edit2ppt": {
+      "command": "/path/to/edit2ppt/.venv/bin/python",
+      "args": ["-m", "edit2ppt.mcp.stdio_main"]
+    }
+  }
+}
+```
+
+**Remote HTTP** — agent calls `https://your-host/mcp` (Streamable HTTP) or
+`/mcp-sse/sse` (legacy SSE). See [docs/mcp-clients.md](docs/mcp-clients.md)
+for full configuration including BYOK + auth headers.
 
 ## Development
 
