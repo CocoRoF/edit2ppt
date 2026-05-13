@@ -104,6 +104,12 @@ class GenerateDeckRequest(ToolRequest):
     anthropic_api_key: str = Field(..., description="BYOK; never persisted.")
     fail_on_quality_error: bool = True
 
+    # When > 0, pages flagged as quality errors are re-run that many times
+    # with an extra "the previous SVG had errors; emit something simpler"
+    # hint appended to their page_summary. Pairs well with
+    # fail_on_quality_error=True to attempt recovery before giving up.
+    retry_pages_on_quality_error: int = Field(default=0, ge=0, le=3)
+
     # BYOK keys for image acquisition. Map of provider env-var names to keys,
     # e.g. {"OPENAI_API_KEY": "sk-...", "PEXELS_API_KEY": "..."}. The keys are
     # exported as env vars only for the duration of each image call.
@@ -293,25 +299,91 @@ async def generate_deck(
     cost = _merge_cost(cost, exec_batch.cost)
     warnings.extend(exec_batch.warnings)
 
-    # Stage 5: quality check
+    # Stage 5: quality check (with optional retry-on-error)
     await _emit(
         on_event,
         StageEvent(stage="checking_quality", progress=0.80, message_key="stages.checking_quality"),
     )
-    quality_slides = [
-        QualitySlide(index=p.page_index, name=f"slide_{p.page_index:02d}", svg=p.svg)
-        for p in exec_batch.results
-    ]
-    quality_resp: QualityCheckResponse = check_svg_quality(
-        QualityCheckRequest(slides=quality_slides, canvas_format=req.canvas_format)
-    )
+    page_results = {p.page_index: p for p in exec_batch.results}
+    quality_resp = _run_quality_check(page_results, req.canvas_format)
     cost = _merge_cost(cost, quality_resp.cost)
-    if req.fail_on_quality_error and not quality_resp.passed:
-        errors = [i for i in quality_resp.issues if i.severity == "error"]
-        raise RuntimeError(
-            f"Quality check failed with {len(errors)} error(s). "
-            "Set fail_on_quality_error=False to export anyway."
+
+    # Per-page retry loop. Each round re-runs only the pages flagged as
+    # `quality_error`. Stops when no errors remain or the retry budget is
+    # exhausted. Failures are still reported as warnings on the final
+    # response — `fail_on_quality_error=True` is checked AFTER retries.
+    retries_left = req.retry_pages_on_quality_error
+    while retries_left > 0:
+        failing_pages = sorted(
+            {issue.page_index for issue in quality_resp.issues
+             if issue.severity == "error" and issue.page_index is not None}
         )
+        if not failing_pages:
+            break
+
+        warnings.append(
+            WarningEntry(
+                code="quality_retry",
+                message=(
+                    f"Retrying {len(failing_pages)} page(s) with quality errors "
+                    f"(round {req.retry_pages_on_quality_error - retries_left + 1})."
+                ),
+                detail={"pages": failing_pages},
+            )
+        )
+        retry_reqs = [
+            ExecutePageRequest(
+                spec_lock=strat.spec_lock,
+                page_index=i,
+                page_summary=(
+                    page_summaries[i]
+                    + "\n\n> Retry hint: the previous SVG failed quality checks. "
+                    "Emit a simpler version of this page — fewer shapes, no "
+                    "advanced filters, plain text + a single image if present."
+                ),
+                images=images_by_page.get(i, []),
+                style=req.style,
+                lang=req.lang,
+                model=req.model,
+                anthropic_api_key=req.anthropic_api_key,
+            )
+            for i in failing_pages
+        ]
+        retry_batch = await execute_batch(
+            ExecuteBatchRequest(spec_lock=strat.spec_lock, pages=retry_reqs),
+            client=client,
+        )
+        cost = _merge_cost(cost, retry_batch.cost)
+        warnings.extend(retry_batch.warnings)
+        for r in retry_batch.results:
+            page_results[r.page_index] = r
+
+        quality_resp = _run_quality_check(page_results, req.canvas_format)
+        cost = _merge_cost(cost, quality_resp.cost)
+        retries_left -= 1
+
+    # Surface unresolved quality errors and (when configured) hard-fail.
+    if not quality_resp.passed:
+        errors = [i for i in quality_resp.issues if i.severity == "error"]
+        if req.fail_on_quality_error:
+            raise RuntimeError(
+                f"Quality check failed with {len(errors)} error(s) after "
+                f"{req.retry_pages_on_quality_error} retry round(s). "
+                "Set fail_on_quality_error=False to export anyway."
+            )
+        warnings.append(
+            WarningEntry(
+                code="quality_errors_present",
+                message=(
+                    f"Exporting with {len(errors)} unresolved quality error(s); "
+                    "PPT may not render every element correctly."
+                ),
+                detail={"error_count": len(errors)},
+            )
+        )
+
+    # Apply any retried page results back into the batch view.
+    exec_batch.results[:] = sorted(page_results.values(), key=lambda r: r.page_index)
 
     # Stage 6: prepare slide inputs (shared by audio + export below).
     slides = [
@@ -422,6 +494,26 @@ async def generate_deck(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+def _run_quality_check(
+    page_results: dict[int, "ExecutePageResponse"],
+    canvas_format: CanvasFormat,
+) -> QualityCheckResponse:
+    """Run the SVG quality checker over the current page results."""
+    from .execute import ExecutePageResponse  # for the forward ref
+
+    quality_slides = [
+        QualitySlide(
+            index=p.page_index,
+            name=f"slide_{p.page_index:02d}",
+            svg=p.svg,
+        )
+        for p in sorted(page_results.values(), key=lambda r: r.page_index)
+    ]
+    return check_svg_quality(
+        QualityCheckRequest(slides=quality_slides, canvas_format=canvas_format)
+    )
+
+
 def _acquire_image(
     item: ImagePlanItem,
     req: "GenerateDeckRequest",
@@ -479,18 +571,37 @@ def _ext_for_mime(mime_type: str) -> str:
     }.get(mime_type, ".png")
 
 
-_PAGE_HEADING_RE = re.compile(r"^##\s+(?:Page|페이지|Slide)\s+\d+", re.MULTILINE | re.IGNORECASE)
+# Heading patterns the Strategist might emit for per-page sections. Ordered
+# so that the most specific (Page/Slide/페이지/슬라이드 + index) wins first;
+# numbered fallback (`## 1.` / `## 1) Title`) catches templates that drop
+# the keyword. All patterns are case-insensitive and anchored to a line start.
+_PAGE_HEADING_PATTERNS = [
+    # `## Page 1`, `## Page-1`, `## Page #1`, `## Page: 1`
+    r"^#{1,3}\s+(?:Page|Slide|페이지|슬라이드|ページ|スライド)[\s\-:#]*\d+",
+    # `## Slide 1: Title`  / `## 페이지 1 — 표지`
+    r"^#{1,3}\s+(?:Page|Slide|페이지|슬라이드|ページ|スライド)\s+\d+[\s\-:—:]",
+    # Numbered heading without a keyword: `## 1.`, `## 1)`, `## 1 - Title`
+    r"^#{1,3}\s+\d+[\.\)\-]\s",
+]
+_PAGE_HEADING_RE = re.compile(
+    "|".join(f"(?:{p})" for p in _PAGE_HEADING_PATTERNS),
+    re.MULTILINE | re.IGNORECASE,
+)
 
 
 def _split_page_plan(design_spec: str, spec_lock: str) -> list[str]:
     """Extract per-page content summaries from the Strategist's output.
 
-    The prompt asks for `## Page N` / `## Slide N` / `## 페이지 N` sections
-    inside the design_spec. We split on those markers; if none are present,
-    fall back to splitting spec_lock on its `pages:` block (best-effort).
+    Heading patterns supported (case-insensitive, line-start, h1/h2/h3):
+        Page / Slide / 페이지 / 슬라이드 / ページ / スライド  + index
+        Page-1 / Slide#1 / Slide: 1 / Page 1: Title / 페이지 1 — 표지
+        Numbered headings without keyword (`## 1.`, `## 1)`, `## 1 - Title`)
+
+    If none match in `design_spec`, fall back to splitting `spec_lock`'s
+    `pages:` block. As a last resort, treat the entire design_spec as a
+    single page (the Executor still runs, the deck just has 1 slide).
     """
     if _PAGE_HEADING_RE.search(design_spec):
-        # Split into chunks starting at each heading.
         positions = [m.start() for m in _PAGE_HEADING_RE.finditer(design_spec)]
         positions.append(len(design_spec))
         return [design_spec[positions[i] : positions[i + 1]].strip() for i in range(len(positions) - 1)]
