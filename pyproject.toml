@@ -54,6 +54,8 @@ dependencies = [
     "edge-tts>=7.2.8",
     # LLM
     "anthropic>=0.40.0",
+    # MCP (Model Context Protocol)
+    "mcp>=1.0.0",
 ]
 
 [project.optional-dependencies]
