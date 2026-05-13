@@ -1,0 +1,221 @@
+"""Execute tool: per-page SVG generation by the Executor LLM role.
+
+For each page in the Strategist's plan, this tool calls the LLM with:
+- system prompt: executor-base + style variant (consultant/general/...) for the page lang
+- user message: spec_lock YAML + this page's content outline + any images for it
+
+The LLM returns an SVG string (plus optional speaker notes). Pages are
+independent so the worker can fan them out in parallel — see
+ppt-master-analysis/04-integration-plan.md §4.9.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import re
+import time
+from typing import Literal
+
+from pydantic import Field
+
+from ..llm import AnthropicClient, DEFAULT_MODEL, load_prompt
+from ..llm.anthropic_client import LLMResult, LLMUsage
+from .strategize import LLMCallable
+from .types import (
+    CostBreakdown,
+    DEFAULT_LANG,
+    LangCode,
+    ToolRequest,
+    ToolResponse,
+    WarningEntry,
+)
+
+ExecutorStyle = Literal["general", "consultant", "consultant-top"]
+
+
+class ExecutorImage(ToolRequest):
+    """One image available to a page (bytes or external URL)."""
+
+    placeholder: str = Field(..., description="Token used by the LLM to reference this image.")
+    url: str | None = None
+    description: str | None = None
+
+
+class ExecutePageRequest(ToolRequest):
+    spec_lock: str = Field(..., description="YAML spec_lock from the Strategist.")
+    page_index: int = Field(..., ge=0)
+    page_summary: str = Field(..., description="Per-page content outline (markdown).")
+    images: list[ExecutorImage] = Field(default_factory=list)
+    style: ExecutorStyle = "general"
+    lang: LangCode = DEFAULT_LANG
+    model: str = DEFAULT_MODEL
+    anthropic_api_key: str
+
+
+class ExecutePageResponse(ToolResponse):
+    page_index: int
+    svg: str
+    speaker_notes: str
+    raw_output: str
+    cost: CostBreakdown
+    warnings: list[WarningEntry] = Field(default_factory=list)
+
+
+class ExecuteBatchRequest(ToolRequest):
+    """Parallel execution of multiple pages with a shared spec_lock."""
+
+    spec_lock: str
+    pages: list[ExecutePageRequest]
+    max_concurrency: int = Field(default=4, ge=1, le=16)
+
+
+class ExecuteBatchResponse(ToolResponse):
+    results: list[ExecutePageResponse]
+    cost: CostBreakdown
+    warnings: list[WarningEntry] = Field(default_factory=list)
+
+
+async def execute_page(
+    req: ExecutePageRequest,
+    *,
+    client: LLMCallable | None = None,
+) -> ExecutePageResponse:
+    started = time.perf_counter()
+    warnings: list[WarningEntry] = []
+
+    system_prompt = _build_system_prompt(req.style, req.lang)
+    user_message = _build_user_message(req)
+
+    llm = client or AnthropicClient(api_key=req.anthropic_api_key, model=req.model)
+    result = await llm.complete(
+        system_prompt=system_prompt,
+        user_message=user_message,
+        max_output_tokens=8192,
+        temperature=0.4,
+        cache_system=True,
+        model=req.model,
+    )
+
+    svg, notes = _parse_output(result.text, warnings)
+
+    return ExecutePageResponse(
+        page_index=req.page_index,
+        svg=svg,
+        speaker_notes=notes,
+        raw_output=result.text,
+        cost=_cost_from_usage(result.usage, time.perf_counter() - started),
+        warnings=warnings,
+    )
+
+
+async def execute_batch(
+    req: ExecuteBatchRequest,
+    *,
+    client: LLMCallable | None = None,
+) -> ExecuteBatchResponse:
+    started = time.perf_counter()
+    sem = asyncio.Semaphore(req.max_concurrency)
+
+    async def _run_one(p: ExecutePageRequest) -> ExecutePageResponse:
+        async with sem:
+            return await execute_page(p, client=client)
+
+    results = await asyncio.gather(*[_run_one(p) for p in req.pages])
+
+    total = CostBreakdown(duration_seconds=time.perf_counter() - started)
+    warnings: list[WarningEntry] = []
+    for r in results:
+        total = CostBreakdown(
+            input_tokens=total.input_tokens + r.cost.input_tokens,
+            output_tokens=total.output_tokens + r.cost.output_tokens,
+            cache_read_tokens=total.cache_read_tokens + r.cost.cache_read_tokens,
+            cache_write_tokens=total.cache_write_tokens + r.cost.cache_write_tokens,
+            duration_seconds=total.duration_seconds,
+        )
+        warnings.extend(r.warnings)
+
+    return ExecuteBatchResponse(
+        results=sorted(results, key=lambda r: r.page_index),
+        cost=total,
+        warnings=warnings,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _build_system_prompt(style: ExecutorStyle, lang: LangCode) -> str:
+    base = load_prompt("executor-base", lang)
+    variant_role = {
+        "general": "executor-general",
+        "consultant": "executor-consultant",
+        "consultant-top": "executor-consultant-top",
+    }[style]
+    variant = load_prompt(variant_role, lang)
+    return f"{base}\n\n---\n\n{variant}"
+
+
+def _build_user_message(req: ExecutePageRequest) -> str:
+    lines: list[str] = []
+    lines.append(f"# Page {req.page_index} ({req.lang})")
+    lines.append("")
+    lines.append("## spec_lock")
+    lines.append("```yaml")
+    lines.append(req.spec_lock.strip())
+    lines.append("```")
+    lines.append("")
+    lines.append("## Page content")
+    lines.append(req.page_summary.strip())
+    lines.append("")
+    if req.images:
+        lines.append("## Images available")
+        for img in req.images:
+            extra = f" — {img.description}" if img.description else ""
+            location = img.url or "(inline, bound to placeholder)"
+            lines.append(f"- `{img.placeholder}` @ {location}{extra}")
+        lines.append("")
+    lines.append("## Output format")
+    lines.append(
+        "Produce two fenced blocks in this order:\n"
+        "1. ```svg ... ``` — the full slide SVG for this page only.\n"
+        "2. ```notes ... ``` — speaker notes (markdown). May be empty."
+    )
+    return "\n".join(lines)
+
+
+_SVG_BLOCK_RE = re.compile(r"```(?:svg|xml)\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE)
+_NOTES_BLOCK_RE = re.compile(r"```(?:notes|markdown)\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE)
+
+
+def _parse_output(text: str, warnings: list[WarningEntry]) -> tuple[str, str]:
+    svg_match = _SVG_BLOCK_RE.search(text)
+    if svg_match:
+        svg = svg_match.group(1).strip()
+    else:
+        # Some models emit a raw <svg>...</svg> block without fences. Tolerate it.
+        bare = re.search(r"<svg[\s\S]*?</svg>", text, re.IGNORECASE)
+        if bare:
+            svg = bare.group(0).strip()
+            warnings.append(
+                WarningEntry(
+                    code="unfenced_svg",
+                    message="Executor returned an unfenced <svg> block; accepted but verify formatting.",
+                )
+            )
+        else:
+            raise ValueError("Executor output did not contain an SVG block")
+
+    notes_match = _NOTES_BLOCK_RE.search(text)
+    notes = notes_match.group(1).strip() if notes_match else ""
+    return svg, notes
+
+
+def _cost_from_usage(usage: LLMUsage, duration_seconds: float) -> CostBreakdown:
+    return CostBreakdown(
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        cache_read_tokens=usage.cache_read_tokens,
+        cache_write_tokens=usage.cache_write_tokens,
+        duration_seconds=duration_seconds,
+    )
