@@ -9,7 +9,14 @@ an asyncio event loop. The sync ones (convert, export, quality, narrate)
 work anywhere.
 """
 
-from .audio import NarrateRequest, NarrateResponse, NarrateSlide, narrate, narrate_async
+from .audio import (
+    NarrateRequest,
+    NarrateResponse,
+    NarrateSlide,
+    NarrateSlideAudio,
+    narrate,
+    narrate_async,
+)
 from .convert import ConvertRequest, ConvertResponse, convert_to_markdown
 from .execute import (
     ExecuteBatchRequest,
@@ -100,6 +107,7 @@ __all__ = [
     "NarrateRequest",
     "NarrateResponse",
     "NarrateSlide",
+    "NarrateSlideAudio",
     "narrate",
     "narrate_async",
     # orchestrator

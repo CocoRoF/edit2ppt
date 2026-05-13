@@ -35,6 +35,7 @@ from pydantic import Field
 
 from ..llm import AnthropicClient, DEFAULT_MODEL
 from ._image_plan import ImagePlanItem, parse_image_plan
+from .audio import NarrateRequest, NarrateSlide, narrate_async
 from .convert import ConvertRequest, ConvertResponse, convert_to_markdown
 from .execute import (
     ExecuteBatchRequest,
@@ -71,6 +72,7 @@ StageName = Literal[
     "acquiring_images",
     "executing_pages",
     "checking_quality",
+    "narrating",
     "exporting",
     "done",
     "failed",
@@ -117,6 +119,29 @@ class GenerateDeckRequest(ToolRequest):
     # Skip the image acquisition stage entirely (text-only deck). Useful for
     # tests / low-cost runs.
     skip_images: bool = False
+
+    # Narration / audio.
+    narrate: bool = Field(
+        default=False,
+        description=(
+            "When true, synthesize per-slide speaker notes with Edge-TTS and "
+            "embed the resulting MP3s into the PPTX so PowerPoint auto-plays "
+            "them on slide entry."
+        ),
+    )
+    narration_voice: str | None = Field(
+        default=None,
+        description="Edge-TTS ShortName. None -> lang's default voice (ko-KR -> SunHi).",
+    )
+    narration_rate: str = Field(default="+0%", description='Speaking rate, e.g. "+0%", "-10%".')
+    narration_use_timings: bool = Field(
+        default=False,
+        description=(
+            "If true, slide auto-advance times derive from each MP3's duration "
+            "(plus narration_padding). Pairs with `narrate=True`."
+        ),
+    )
+    narration_padding: float = Field(default=0.5, ge=0.0)
 
 
 class GenerateDeckResponse(ToolResponse):
@@ -288,11 +313,7 @@ async def generate_deck(
             "Set fail_on_quality_error=False to export anyway."
         )
 
-    # Stage 6: export
-    await _emit(
-        on_event,
-        StageEvent(stage="exporting", progress=0.92, message_key="stages.exporting"),
-    )
+    # Stage 6: prepare slide inputs (shared by audio + export below).
     slides = [
         SlideInput(
             index=p.page_index,
@@ -302,12 +323,72 @@ async def generate_deck(
         )
         for p in exec_batch.results
     ]
+
+    # Stage 7: (optional) narration — synthesize MP3 per slide BEFORE export
+    # so the engine can embed audio into the PPTX. Failures here flow to
+    # warnings and the deck still exports without audio.
+    narration_bytes_by_slide: dict[str, bytes] = {}
+    if req.narrate:
+        narratable = [
+            NarrateSlide(
+                index=s.index,
+                name=s.name,
+                notes_markdown=s.notes or "",
+            )
+            for s in slides
+            if s.notes
+        ]
+        if narratable:
+            await _emit(
+                on_event,
+                StageEvent(stage="narrating", progress=0.88, message_key="stages.narrating"),
+            )
+            try:
+                narration_resp = await narrate_async(
+                    NarrateRequest(
+                        slides=narratable,
+                        lang=req.lang,
+                        voice=req.narration_voice,
+                        rate=req.narration_rate,
+                    )
+                )
+                for audio in narration_resp.audios:
+                    narration_bytes_by_slide[audio.name] = audio.mp3
+                cost = CostBreakdown(
+                    input_tokens=cost.input_tokens,
+                    output_tokens=cost.output_tokens,
+                    cache_read_tokens=cost.cache_read_tokens,
+                    cache_write_tokens=cost.cache_write_tokens,
+                    image_count=cost.image_count,
+                    audio_seconds=cost.audio_seconds + narration_resp.cost.audio_seconds,
+                    duration_seconds=cost.duration_seconds,
+                )
+                warnings.extend(narration_resp.warnings)
+            except Exception as exc:
+                warnings.append(
+                    WarningEntry(
+                        code="narration_failed",
+                        message=(
+                            f"Narration synthesis failed: {exc}. "
+                            "Deck exports without audio."
+                        ),
+                    )
+                )
+
+    # Stage 8: export
+    await _emit(
+        on_event,
+        StageEvent(stage="exporting", progress=0.92, message_key="stages.exporting"),
+    )
     export_resp: ExportResponse = export_pptx(
         ExportRequest(
             slides=slides,
             canvas_format=req.canvas_format,
             lang=req.lang,
             images=image_bytes_by_filename,
+            narration_audio=narration_bytes_by_slide,
+            narration_padding=req.narration_padding,
+            use_narration_timings=req.narration_use_timings,
         )
     )
     cost = _merge_cost(cost, export_resp.cost)

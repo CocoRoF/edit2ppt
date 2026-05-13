@@ -238,7 +238,11 @@ def build_mcp_server(context: MCPContext | None = None) -> FastMCP:
             "Requires BYOK: provide your Anthropic API key in "
             "`anthropic_api_key`; we use it for this call only and never "
             "persist it. "
-            "Korean (ko-KR) is the default language; pass `lang` to switch."
+            "Korean (ko-KR) is the default language; pass `lang` to switch. "
+            "Pass `image_api_keys={\"OPENAI_API_KEY\":...}` to enable AI-image "
+            "generation for hero / chart slides. Pass `narrate=True` to embed "
+            "Korean speaker-notes narration (Edge-TTS) into the resulting "
+            "PPTX so PowerPoint auto-plays it on slide entry."
         ),
     )
     async def generate_deck_tool(
@@ -253,6 +257,12 @@ def build_mcp_server(context: MCPContext | None = None) -> FastMCP:
         canvas_format: str = "ppt169",
         model: str = "claude-opus-4-7",
         output_basename: str = "deck",
+        image_api_keys: dict[str, str] | None = None,
+        skip_images: bool = False,
+        narrate: bool = False,
+        narration_voice: str | None = None,
+        narration_rate: str = "+0%",
+        narration_use_timings: bool = False,
         mcp_ctx: Context | None = None,
     ) -> dict[str, Any]:
         if not source_asset_ids:
@@ -314,6 +324,12 @@ def build_mcp_server(context: MCPContext | None = None) -> FastMCP:
                     model=model,
                     anthropic_api_key=anthropic_api_key,
                     fail_on_quality_error=False,
+                    image_api_keys=image_api_keys or {},
+                    skip_images=skip_images,
+                    narrate=narrate,
+                    narration_voice=narration_voice,
+                    narration_rate=narration_rate,
+                    narration_use_timings=narration_use_timings,
                 ),
                 on_event=on_event,
             )
