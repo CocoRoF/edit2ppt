@@ -309,3 +309,96 @@ One speaker note file per page, saved to `notes/`:
 - `<g opacity="...">` FORBIDDEN (group opacity); set on each child element individually
 - Image transparency uses overlay mask layer (`<rect fill="bg-color" opacity="0.x"/>`)
 - Inline styles only; external CSS and `@font-face` FORBIDDEN
+
+---
+
+## Appendix K. Korean (ko-KR) Reference Examples
+
+These are paste-ready building blocks for Korean decks. Use them as
+starting points in §IV Typography and §III Visual Theme. They line up
+with the Korean appendices in [strategist.en.md §K](../prompts/strategist.en.md)
+and [executor-base.en.md §K](../prompts/executor-base.en.md).
+
+### K.1 Korean font stack reference
+
+| Use | Stack |
+|---|---|
+| Body (modern startup / B2B default) | `"Pretendard", "Pretendard Variable", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif` |
+| Body (warm humanist) | `"Spoqa Han Sans Neo", "Noto Sans KR", "Malgun Gothic", sans-serif` |
+| Body (information-dense) | `"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif`, `letter-spacing: -0.02em`, weight 400 |
+| Title (impact) | `"Pretendard 900", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif` |
+| Title (editorial serif) | `"Nanum Myeongjo", "Batang", "Times New Roman", serif` |
+| Mono / code | `"D2 Coding", Consolas, "Courier New", monospace` |
+| Number-heavy display (statistics) | `"Pretendard 900", "Inter", "Helvetica Neue", "Apple SD Gothic Neo", sans-serif` |
+
+Every Korean stack MUST end with `"Malgun Gothic"` (the only Hangul font
+shipped with every recent Windows). Pretendard is OFL-licensed and safe
+to embed in PPTX when you want to guarantee fidelity.
+
+### K.2 Korean color tokens — drop-in palettes
+
+Paste into §III Visual Theme. Pair one primary with neutrals + 1 accent.
+
+```yaml
+# K-startup minimal (default for unspecified Korean decks)
+colors:
+  primary: "#0064FF"      # Toss-blue (or substitute "#161616" near-black)
+  secondary: "#F5F6F7"    # light surface
+  accent: "#FF0066"       # warm action highlight (use sparingly)
+  text: "#161616"
+  text_muted: "#525252"
+  background: "#FFFFFF"
+
+# Korean government / public sector
+colors:
+  primary: "#003478"      # Korean navy
+  secondary: "#5C7BAE"
+  accent: "#C8102E"       # Korean red for emphasis only
+  text: "#1A1A1A"
+  background: "#FFFFFF"
+
+# Korean consulting (베인 한국 / 삼정KPMG tone)
+colors:
+  primary: "#0F2A47"      # slate-navy
+  secondary: "#7A8AA0"
+  accent: "#C8102E"       # consulting red
+  text: "#1A1A1A"
+  background: "#FFFFFF"
+
+# Korean media / publishing (editorial serif)
+colors:
+  primary: "#1F1F1F"
+  secondary: "#A9A9A9"
+  accent: "#B23A48"       # warm magazine red
+  text: "#1A1A1A"
+  background: "#F8F4EC"   # warm paper
+```
+
+### K.3 Korean typography ramp (px)
+
+| Slot | Size | Weight | Notes |
+|---|---:|---:|---|
+| Cover title | 72 | 900 | ≤18 Hangul |
+| Cover subtitle | 28 | 400 | ≤30 Hangul |
+| Section heading | 60 | 700 | ≤16 Hangul |
+| Page title | 40 | 700 | ≤20 Hangul |
+| Page subtitle | 20 | 500 | ≤30 Hangul (single line) |
+| Body | 20 | 400 | ≤50 Hangul / line |
+| Caption | 13 | 400 | ≤35 Hangul |
+| Source attribution | 11 | 400 | bottom-left |
+
+All Korean body uses `letter-spacing: -0.02em`, headlines `-0.03em` to
+`-0.06em`. No italic anywhere.
+
+### K.4 Korean speaker-notes register reference
+
+```markdown
+# 표지
+
+이번 발표에서는 2026년 3분기 영업 결과를 임원진께 공유드리겠습니다.
+[화면 강조] 매출은 전년 동기 대비 12% 증가한 3,420억 원을 기록했습니다.
+```
+
+Use `-입니다 / -습니다` polite-formal endings. `[화면 강조]` and
+`[잠시 멈춤]` cues are read by humans but stripped by TTS, so the
+narration sounds natural.
