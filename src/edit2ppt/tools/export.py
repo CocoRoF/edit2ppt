@@ -14,6 +14,7 @@ content.
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 from pydantic import Field
 
@@ -60,6 +61,19 @@ class ExportRequest(ToolRequest):
     use_native_shapes: bool = True
     use_compat_mode: bool = True
 
+    # Per-deck media assets. Keyed by the filename the SVGs reference, e.g.
+    # `<image href="hero_cover.png">` -> images={"hero_cover.png": <png bytes>}.
+    # Files land alongside the SVGs in the workspace; the engine embeds them
+    # via svg_finalize / pptx_builder. ASCII-only filenames (Track A).
+    images: dict[str, bytes] = Field(default_factory=dict)
+
+    # Per-slide narration audio (MP3 bytes). Keys are the slide names that
+    # match `SlideInput.name`. When non-empty the resulting PPTX embeds the
+    # audio so PowerPoint can auto-play it during slide transitions.
+    narration_audio: dict[str, bytes] = Field(default_factory=dict)
+    narration_padding: float = Field(default=0.5, ge=0.0)
+    use_narration_timings: bool = False
+
 
 class ExportResponse(ToolResponse):
     pptx: bytes
@@ -96,6 +110,12 @@ def export_pptx(req: ExportRequest) -> ExportResponse:
         svg_paths = []
         notes_map: dict[str, str] = {}
 
+        # Drop image files alongside the SVGs so <image href="<name>.png">
+        # resolves correctly during svg_finalize/embed_images.
+        for filename, content in req.images.items():
+            _validate_ascii_filename(filename)
+            (svg_dir / filename).write_bytes(content)
+
         # Sort by index so the resulting deck is deterministic regardless of caller order.
         for slide in sorted(req.slides, key=lambda s: s.index):
             svg_path = write_text(svg_dir, f"{slide.name}.svg", slide.svg)
@@ -103,6 +123,18 @@ def export_pptx(req: ExportRequest) -> ExportResponse:
             if slide.notes:
                 notes_map[slide.name] = slide.notes
             detected.append(detect_lang(slide.svg, default=req.lang))  # type: ignore[arg-type]
+
+        # Narration audio: write MP3s and build the dict the engine expects
+        # ({svg_stem: Path}). Keys must already match slide names.
+        narration_map: dict[str, "Path"] = {}
+        if req.narration_audio:
+            audio_dir = ws / "audio"
+            audio_dir.mkdir()
+            for slide_name, mp3_bytes in req.narration_audio.items():
+                _validate_ascii_filename(slide_name)
+                path = audio_dir / f"{slide_name}.mp3"
+                path.write_bytes(mp3_bytes)
+                narration_map[slide_name] = path
 
         output_path = ws / "output.pptx"
         ok = create_pptx_with_native_svg(
@@ -120,6 +152,9 @@ def export_pptx(req: ExportRequest) -> ExportResponse:
             animation_duration=req.animation_duration,
             animation_stagger=req.animation_stagger,
             animation_trigger=req.animation_trigger,
+            narration_audio=narration_map or None,
+            use_narration_timings=req.use_narration_timings,
+            narration_padding=req.narration_padding,
         )
         if not ok:
             raise RuntimeError("core engine reported failure during PPTX assembly")
@@ -133,3 +168,16 @@ def export_pptx(req: ExportRequest) -> ExportResponse:
         cost=CostBreakdown(duration_seconds=duration),
         warnings=warnings,
     )
+
+
+def _validate_ascii_filename(name: str) -> None:
+    """Track A: filenames written into the export workspace must be ASCII."""
+    try:
+        name.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise ValueError(
+            f"Workspace filenames must be ASCII (got {name!r}); "
+            "Korean text belongs in slide content, not in resource filenames."
+        ) from exc
+    if "/" in name or "\\" in name or name.startswith(".."):
+        raise ValueError(f"Workspace filename must be a single component: {name!r}")

@@ -34,6 +34,7 @@ from typing import Awaitable, Callable, Literal
 from pydantic import Field
 
 from ..llm import AnthropicClient, DEFAULT_MODEL
+from ._image_plan import ImagePlanItem, parse_image_plan
 from .convert import ConvertRequest, ConvertResponse, convert_to_markdown
 from .execute import (
     ExecuteBatchRequest,
@@ -43,6 +44,12 @@ from .execute import (
     execute_batch,
 )
 from .export import ExportRequest, ExportResponse, SlideInput, export_pptx
+from .images import (
+    GenerateImageRequest,
+    SearchImageRequest,
+    generate_image,
+    search_image,
+)
 from .quality import QualityCheckRequest, QualityCheckResponse, QualitySlide, check_svg_quality
 from .strategize import StrategizeRequest, StrategizeResponse, strategize
 from .types import (
@@ -94,6 +101,22 @@ class GenerateDeckRequest(ToolRequest):
     model: str = DEFAULT_MODEL
     anthropic_api_key: str = Field(..., description="BYOK; never persisted.")
     fail_on_quality_error: bool = True
+
+    # BYOK keys for image acquisition. Map of provider env-var names to keys,
+    # e.g. {"OPENAI_API_KEY": "sk-...", "PEXELS_API_KEY": "..."}. The keys are
+    # exported as env vars only for the duration of each image call.
+    image_api_keys: dict[str, str] = Field(default_factory=dict)
+
+    # Defaults for the image plan when the Strategist's spec_lock leaves them
+    # implicit. Both can be overridden per-page via the spec_lock image entry.
+    default_image_backend: str = "openai"
+    default_search_providers: list[str] = Field(
+        default_factory=lambda: ["pexels", "pixabay"]
+    )
+
+    # Skip the image acquisition stage entirely (text-only deck). Useful for
+    # tests / low-cost runs.
+    skip_images: bool = False
 
 
 class GenerateDeckResponse(ToolResponse):
@@ -162,8 +185,63 @@ async def generate_deck(
             "cannot run executor. Inspect strat.raw_output."
         )
 
-    # Stage 3: (skipping image acquisition in M2 — image_plan parsing arrives in M5)
-    # The Executor still receives an empty image list and may inline placeholders.
+    # Stage 3: image acquisition. Parse the Strategist's image plan, fetch
+    # each image (AI-generated or web-searched), and bundle the bytes for
+    # both the Executor (so it can reference them by placeholder) and the
+    # Export stage (so it can drop the files alongside the SVGs in the
+    # workspace).
+    images_by_page: dict[int, list[ExecutorImage]] = {}
+    image_bytes_by_filename: dict[str, bytes] = {}
+    if not req.skip_images:
+        plan = parse_image_plan(strat.spec_lock)
+        if plan:
+            await _emit(
+                on_event,
+                StageEvent(
+                    stage="acquiring_images",
+                    progress=0.30,
+                    message_key="stages.acquiring_images",
+                ),
+            )
+            for item in plan:
+                try:
+                    image_bytes, mime, ack = await asyncio.to_thread(
+                        _acquire_image,
+                        item,
+                        req,
+                    )
+                except Exception as exc:
+                    warnings.append(
+                        WarningEntry(
+                            code="image_acquisition_failed",
+                            message=(
+                                f"Page {item.page_index} image "
+                                f"{item.placeholder!r}: {exc}"
+                            ),
+                            detail={"page_index": item.page_index, "placeholder": item.placeholder},
+                        )
+                    )
+                    continue
+
+                ext = _ext_for_mime(mime)
+                filename = f"{item.placeholder}{ext}"
+                image_bytes_by_filename[filename] = image_bytes
+                images_by_page.setdefault(item.page_index, []).append(
+                    ExecutorImage(
+                        placeholder=item.placeholder,
+                        url=filename,  # relative path the SVG will reference
+                        description=item.description or ack,
+                    )
+                )
+                cost = CostBreakdown(
+                    input_tokens=cost.input_tokens,
+                    output_tokens=cost.output_tokens,
+                    cache_read_tokens=cost.cache_read_tokens,
+                    cache_write_tokens=cost.cache_write_tokens,
+                    image_count=cost.image_count + 1,
+                    audio_seconds=cost.audio_seconds,
+                    duration_seconds=cost.duration_seconds,
+                )
 
     # Stage 4: execute pages (parallel, LLM)
     await _emit(
@@ -175,7 +253,7 @@ async def generate_deck(
             spec_lock=strat.spec_lock,
             page_index=i,
             page_summary=summary,
-            images=[],
+            images=images_by_page.get(i, []),
             style=req.style,
             lang=req.lang,
             model=req.model,
@@ -229,6 +307,7 @@ async def generate_deck(
             slides=slides,
             canvas_format=req.canvas_format,
             lang=req.lang,
+            images=image_bytes_by_filename,
         )
     )
     cost = _merge_cost(cost, export_resp.cost)
@@ -261,6 +340,63 @@ async def generate_deck(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _acquire_image(
+    item: ImagePlanItem,
+    req: "GenerateDeckRequest",
+) -> tuple[bytes, str, str | None]:
+    """Resolve a single ImagePlanItem to (bytes, mime, ack-text).
+
+    Generate path: dispatches to `tools.images.generate_image`.
+    Search path:   dispatches to `tools.images.search_image`.
+
+    The third return value is an acknowledgment / attribution string the
+    Executor can show as a credit line ("Photo: …") when required.
+    """
+    if item.mode == "generate":
+        prompt = item.prompt or item.description or ""
+        if not prompt:
+            raise ValueError(f"image plan item {item.placeholder!r} has no prompt")
+        backend = item.backend or req.default_image_backend
+        result = generate_image(
+            GenerateImageRequest(
+                prompt=prompt,
+                backend=backend,
+                aspect_ratio=item.aspect_ratio,
+                api_keys=req.image_api_keys,
+            )
+        )
+        return result.image, result.mime_type, None
+
+    if item.mode == "search":
+        query = item.query or item.description or ""
+        if not query:
+            raise ValueError(f"image plan item {item.placeholder!r} has no query")
+        providers = item.providers or req.default_search_providers
+        result = search_image(
+            SearchImageRequest(
+                query=query,
+                providers=providers,
+                aspect_ratio=item.aspect_ratio,
+                api_keys=req.image_api_keys,
+            )
+        )
+        ack = None
+        if result.attribution:
+            ack = f"사진: {result.attribution}" if "Korean" in str(item.description or "") or result.license == "CC BY" else f"Photo: {result.attribution}"
+        return result.image, result.mime_type, ack
+
+    raise ValueError(f"unknown image plan mode {item.mode!r}")
+
+
+def _ext_for_mime(mime_type: str) -> str:
+    return {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/webp": ".webp",
+        "image/gif": ".gif",
+    }.get(mime_type, ".png")
+
 
 _PAGE_HEADING_RE = re.compile(r"^##\s+(?:Page|페이지|Slide)\s+\d+", re.MULTILINE | re.IGNORECASE)
 
