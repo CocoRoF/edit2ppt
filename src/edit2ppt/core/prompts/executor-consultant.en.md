@@ -185,3 +185,77 @@ Based on our market scan, we have distilled three key findings, and the most imp
 - [ ] Chart colors are unified, using monochromatic scheme rather than rainbow
 - [ ] Notes are conclusion-first with conversational data
 - [ ] Notes contain no bracketed stage markers and no `Key points:` / `Duration:` meta-lines (TTS reads everything verbatim)
+
+---
+
+## Appendix K. Korean (ko-KR) Consulting Style
+
+When the runtime `Output Language` directive sets Korean (ko-KR), translate
+the consulting conventions below into a Korean-native register **without**
+turning the deck into a literal translation of an English deck.
+
+### K.1 Korean consulting register
+
+- **Polite-formal speech.** Korean consulting decks use the `-입니다 / -습니다`
+  register. Imperatives soften with `-십시오 / -하시기 바랍니다`. Never use
+  banmal (`-야 / -지` casual forms) regardless of how informal the brief
+  feels.
+- **SCQA structure stays.** `상황 (Situation) → 복잡성 (Complication) →
+  질문 (Question) → 답변 (Answer)`. Korean clients expect this same shape;
+  use these Korean labels in section dividers / appendix tabs.
+- **Assertion-based titles in Korean.** "Q3 매출 12% 증가, 가전 부문이 견인"
+  beats "Q3 매출 현황 분석". Always lead with the finding, not the topic.
+- **Bilingual KPIs.** Korean executive decks frequently mix Korean labels
+  with English KPI shorthand: `매출 (Revenue) 3,420억 ▲12% YoY`. This is
+  acceptable when the brief allows; otherwise pure Korean (`매출 3,420억,
+  전년동기대비 12% 증가`) is the safer default.
+
+### K.2 Korean number / currency conventions
+
+Korean consulting decks **do not** translate everything to MM / BN:
+
+- **Money**: `1억 원` ≠ `100,000,000 원` in narrative copy — use the
+  unit-suffix form (`3,420억`, `4.2조`). Reserve the digit form for
+  data tables and detailed appendix.
+- **Growth rates**: `▲12.5%p` (percentage-points) vs `▲12.5%` (relative).
+  Spell out: `12.5%p YoY 증가`.
+- **Periods**: `2026년 3분기` or `2026. Q3` — pick one per deck.
+- **Counts**: `명` for people, `개사` for companies, `건` for cases,
+  `백만 개` (not `MM` or `million units`).
+
+### K.3 Visual tone for Korean consulting
+
+The Strategist may select one of these tones (see strategist §K.2 for
+hex codes); the Executor renders accordingly:
+
+- **베인 한국 / KPMG 삼정 / Accenture Korea tone** — deep slate-navy
+  (`#0F2A47`) primary + a Korean-red accent (`#C8102E`). Pretendard body,
+  Pretendard 900 titles. No serif (Korean clients read serif as academic,
+  not consulting).
+- **McKinsey-influenced tone** — black/white with 1 photo per page,
+  generous margins. Switch the body face from Bower (not Hangul-friendly)
+  to Pretendard or Apple SD Gothic Neo at 18–20pt.
+- **Big4 conservative tone** — corporate navy (`#003478`) + warm grey,
+  Pretendard, dense tables with horizontal rules only.
+
+### K.4 Chart label conventions (Korean)
+
+- Axis labels: 1 line, Korean noun phrase only (`매출액 (억 원)`, `시점`).
+- Series labels: bare Korean (`디지털 매출`, `오프라인 매출`); avoid
+  parenthetical English unless the client uses Konglish internally.
+- Data callouts: Korean-unit form on chart (`3,420억`), digit form in
+  source-attribution footnote at the bottom (`출처: 자체 분석, 2026.Q3`).
+- Source attribution Korean phrasing: `출처: …` / `자료: …` — always
+  bottom-left, 10–11pt.
+
+### K.5 What stays English in Korean consulting decks
+
+Even in a Hangul-first consulting deck, keep these in English (Track A):
+
+- All YAML/JSON keys, SVG attributes, slot ids, asset filenames (see
+  executor-base §K.5)
+- Acronyms with established Korean recognition: `KPI`, `ROI`, `IRR`,
+  `EBITDA`, `M&A` (do NOT translate to `핵심성과지표`)
+- Brand / company names that are spelled English in their own materials
+  (`Coupang` not `쿠팡` when the client itself uses the English mark)
+- Globally-recognized industry segments: `B2B`, `D2C`, `SaaS`, `FMCG`
