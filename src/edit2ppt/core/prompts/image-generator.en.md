@@ -404,3 +404,85 @@ Diagnose the problem category and apply a targeted prompt fix:
 - Brand names or HEX codes inside the subject description (degrades output)
 - Mixed Deck Style Anchors across images in the same deck (breaks coherence)
 - Placing an image without updating `image_prompts.md` and the resource list status
+
+---
+
+## Appendix K. Korean (ko-KR) Visual Context
+
+When the runtime `Output Language` directive sets Korean (ko-KR), the
+*deck content* is Korean — but the *image-generation prompts* themselves
+remain English. Modern image models (gpt-image-2, Gemini 3 image,
+FLUX, Ideogram) produce better photographic and illustrated output from
+English prompts even when the subject is Korean. The user-facing slide
+text is in Korean; the prompt to the model is in English. Both can be
+true at once.
+
+### K.1 Korean subjects rendered well in English prompts
+
+Use the canonical English phrasings when the subject is Korean. The model
+recognizes these tokens; literal romanizations (e.g. "hanok" ≫
+"han-ok") cluster correctly in latent space.
+
+| Korean subject | English prompt phrasing | Notes |
+|---|---|---|
+| 한복 | `hanbok, traditional Korean dress` | Reliably rendered |
+| 한옥 | `hanok, traditional Korean house with tiled roof` | Add "wooden" for clarity |
+| 한국 사옥 / 오피스 | `modern Korean office tower at sunset` | "Seoul" beats "Korean" for skyline shots |
+| 한국 직장인 | `Korean office workers in business attire` | Add "Asian" if model defaults too Western |
+| 한식 | Specify the dish: `bibimbap`, `kimchi stew`, `tteokbokki` | Generic "Korean food" yields uneven results |
+| K-pop 스타일 | `K-pop concept photo, studio lighting, glossy magazine style` | Avoid named artists (rights / model alignment) |
+| 시장 / 한국 전통 시장 | `traditional Korean street market, neon signs, food stalls` | Great for ambient B-roll |
+| 한국 풍경 | `Seoul skyline at dusk`, `Korean countryside in spring` | Geography keywords beat "Korean landscape" |
+
+### K.2 Korean brand-tone prompts
+
+Translate the strategist's brand-tone hints (§K.2 in `strategist.en.md`)
+into English visual-prompt vocabulary:
+
+| Korean tone cue | English prompt addition |
+|---|---|
+| 토스 스타일 / Toss-style minimal | `minimal flat design, soft blue palette, plenty of negative space, friendly UI illustration` |
+| 카카오 / Kakao playful | `bright yellow accents, soft rounded shapes, friendly illustration` |
+| 네이버 / Naver | `green tech accents, clean modern UI illustration, vector style` |
+| 삼성 코퍼레이트 | `corporate Samsung blue palette, crisp grid, generous whitespace` |
+| 정부 / 공공 발표 | `formal, dignified, navy blue, restrained composition` |
+| K-startup 모던 | `Korean startup branding, Pretendard typography, soft pastel illustration, flat 2D vector` |
+
+When the deck is a *consulting deck in Korean*, photos should default to
+`Korean professionals in a meeting, neutral office background, natural
+lighting` — generic stock-Asian photography looks visually wrong in
+a Korean B2B context.
+
+### K.3 Hangul-in-image policy
+
+Most image models render Hangul poorly inside the image (smeared
+glyphs, hallucinated characters). Hard rule for Korean decks:
+
+- **Do not** ask the model to render Hangul text inside the image. Add
+  Korean text as an SVG `<text>` element on top of the image during
+  Executor instead.
+- **Acceptable**: ask for "no text, no logos, no watermarks" in the
+  negative prompt. This is the most consistent visual outcome.
+- **Edge case**: when the deck genuinely needs Hangul *inside* the image
+  (e.g. mock product UI), use `gpt-image-2` (better Hangul fidelity than
+  the FLUX family) and re-roll until the glyphs are readable. Inspect
+  every output before approving.
+
+### K.4 Where the prompt itself stays English
+
+The full image-generation prompt sent to the model is **English** even
+in a Korean deck:
+
+```
+Deck Style Anchor: editorial magazine, warm earth tones, ...
+[Camera] medium close-up, shallow depth of field
+[Lighting] golden hour, soft directional
+[Composition] rule of thirds, subject right-third
+[Subject] Korean office worker in their 30s, business casual, ...
+[Style] photographic, color grading: cool teal shadows ...
+[Negative] no text, no logos, no watermarks, no Hangul characters in image
+```
+
+Reasoning: image-model training data is dominated by English captions;
+English prompts are denser and more reliably tokenized. The Korean *deck
+copy* and *slide UI* arrive separately during Executor.

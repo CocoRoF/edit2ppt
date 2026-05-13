@@ -264,3 +264,78 @@ In addition to the shared checkpoint in [`image-base.md`](./image-base.md) §10:
 - [ ] Any `attribution-required` image has visible inline credit text in the corresponding SVG
 - [ ] `metadata_dimensions` warnings surfaced when downloaded preview is much smaller than upstream-claimed size
 - [ ] `Needs-Manual` rows include the failure reason
+
+---
+
+## Appendix K. Korean (ko-KR) Web-Search Tactics
+
+When the runtime `Output Language` directive sets Korean (ko-KR), the
+*deck content* is Korean but the *search queries* themselves stay
+English in 99% of cases. Pexels / Pixabay / Openverse / Wikimedia
+catalog English captions; native Korean queries return either nothing
+or visually irrelevant matches.
+
+### K.1 Translate Korean concepts to English search terms
+
+| Korean intent | English search query | Notes |
+|---|---|---|
+| 한국 직장인 | `Korean office workers`, `Asian business team meeting` | Add "Korean" or "Seoul" for Korean-specific stock |
+| 회의 / 미팅 | `business meeting`, `team meeting conference room` | Generic — many results |
+| 서울 야경 | `Seoul skyline night`, `Seoul city lights` | Pexels has good Seoul shots |
+| 한식 | Specific dish — `bibimbap`, `kimchi`, `Korean barbecue` | Avoid "Korean food" alone |
+| 자연 풍경 | `mountain landscape`, `forest path autumn` | Korean landscapes specifically: `Jeju Island`, `Bukhansan` |
+| 데이터 차트 | `data visualization`, `business chart dashboard` | Almost always English search wins |
+| 추상 패턴 | `abstract geometric pattern`, `gradient background` | Generic |
+| 교육 / 학습 | `students studying`, `online learning classroom` | Generic |
+
+### K.2 Korean-specific imagery
+
+For deck content that demands Korean visual specifics (not generic
+"Asian business"), prefer these query patterns and providers:
+
+- **Pexels**: `Korea`, `Seoul`, `Jeju`, `Busan`, `K-pop concept`,
+  `hanok`, `hanbok` — Pexels has a respectable Korea catalog. Add
+  `model=ko` parameter if the provider supports locale (Pexels does not,
+  Pixabay does for some endpoints).
+- **Wikimedia Commons**: Korean cultural artifacts (한복, 한옥, 전통
+  악기) — search English names plus `site:commons.wikimedia.org`
+  externally. Wikimedia entries are CC-licensed but require attribution.
+- **Openverse**: aggregate over CC-licensed catalogs; good fallback when
+  Pexels lacks Korea-specific shots.
+
+### K.3 Bilingual query strategy
+
+For ambiguous concepts, run **two queries**: one English-generic and one
+Korean-specific. Pick the best visual match:
+
+```
+Strategist plan: "한국 스타트업 팀 분위기"
+  Query A (English-generic):  "modern startup team office"
+  Query B (Korean-specific):  "Korean tech startup office Seoul"
+  Pick whichever yields a more recognizably Korean office (signage,
+  furniture, urban backdrop).
+```
+
+If neither yields a Korea-specific match within the licence tier, fall
+back to AI generation (image-generator.en.md §K) with a Korean-context
+prompt rather than ship a generic Western-office stock photo.
+
+### K.4 Attribution text in Korean decks
+
+When a sourced image requires attribution (CC BY / CC BY-SA / Pexels
+attribution-strong tier), render the credit on the slide:
+
+- **Korean phrasing**: `사진: 사진가 이름 — 출처` (e.g. `사진: Kim Doe — Unsplash`).
+  Use this pattern when the deck is Korean.
+- **English phrasing**: `Photo: Kim Doe — Unsplash` if the deck mixes
+  Korean + English copy and English is the dominant register.
+- **License-link text**: keep the licence acronym in English/uppercase
+  (`CC BY 4.0`, `CC BY-SA 4.0`, `CC0`). Do not translate `CC` to `크리에이티브
+  커먼즈` on the slide — that bloats the footnote.
+
+### K.5 What stays English in image_sources.json
+
+Per Track A — all keys, license codes, provider names, source URLs in
+the JSON manifest stay English. Only the `attribution_text` Korean
+phrasing is rendered to the slide; the JSON keys themselves never carry
+Hangul.
