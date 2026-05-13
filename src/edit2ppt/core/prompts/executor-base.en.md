@@ -407,3 +407,129 @@ python3 scripts/svg_to_pptx.py <project_path>
 #   backup/<timestamp>/<project_name>_svg.pptx        ← SVG snapshot
 #   backup/<timestamp>/svg_output/                    ← Executor SVG source backup
 ```
+
+---
+
+## Appendix K. Korean (ko-KR) Layout & Typography Rules
+
+When the runtime `Output Language` directive at the top of this prompt sets
+Korean (ko-KR), apply these rules **in addition** to the rest of this file.
+None of them replace the SVG / OOXML constraints in
+[shared-standards.md](shared-standards.md) — they refine layout and
+typography for Hangul-bearing slides.
+
+### K.1 Hangul-aware text metrics
+
+The converter's text-width estimator counts each Hangul syllable as a
+full-width character (G1 patch in `drawingml_utils.py`). A body line at
+20pt on a 1280px-wide content column holds roughly **45–55 Hangul
+syllables** before wrapping. Build pages with these density caps:
+
+| Slot | Max Hangul / line | Max body lines | Font-size (px) |
+|---|---:|---:|---:|
+| Cover title | 18 | 1 (rarely 2) | 64–80 |
+| Cover subtitle | 30 | 1–2 | 24–32 |
+| Section heading (`02_chapter` slot) | 16 | 1 | 56–72 |
+| Page title (`03_content` slot) | 20 | 1–2 | 36–44 |
+| Page subtitle | 30 | 1 | 18–22 |
+| Body bullet | 50 | 1 each | 18–22 |
+| Body paragraph | 50 | 2–4 | 18–20 |
+| Caption / footnote | 35 | 1 | 12–14 |
+
+> **Linebreak hygiene**: Hangul does NOT permit hyphenation; do not insert
+> `&shy;` or break inside a syllable. Break on whitespace or particles
+> (`은/는/이/가/을/를/에/에서/으로/와/과`) when forced. Avoid ending a line
+> on a single particle — pull it to the next line instead.
+
+### K.2 Font stack hygiene (Korean decks)
+
+Stacks come from spec_lock.yaml `typography` (Strategist §K.1). Each
+`<text>` element must:
+
+1. Use the **exact stack from spec_lock** — never substitute. Latin or
+   number-heavy runs may use a Latin-only stack from spec_lock
+   (`typography.latin_stack`), but never invent fonts.
+2. Set `font-style="normal"`. The converter ignores `italic` on CJK
+   anyway and italic Hangul reads as broken-font noise.
+3. Apply `letter-spacing="-0.02em"` (or whatever spec_lock pins) on
+   Korean body. Set it inside `<text>`, not on the parent `<g>`.
+4. Use weight `400` (regular) or `700`/`900` (bold). Avoid `500` and
+   `600` for Korean body — Pretendard/Malgun Gothic substitutions
+   rasterize them inconsistently.
+
+### K.3 Anchor / Dense / Breathing for Korean copy
+
+The base `Page Rhythm` rules (§5) still apply, but budgets shrink:
+
+**Anchor page (single big idea)**
+
+- 1 headline (≤ 16 Hangul, weight 700/900)
+- 1 supporting sentence (≤ 30 Hangul, weight 400)
+- 1 photo OR 1 illustration OR 1 large statistic
+- ≥ 35% of the canvas blank (generous negative space)
+- Maxim: `한 페이지 = 한 메시지` — never two competing headlines
+
+**Dense page (data / matrix / multi-axis)**
+
+- 1 page title (≤ 20 Hangul)
+- 3–6 modules (rows of cards, 2×2 matrix, comparison table)
+- Each module: micro-heading (≤ 12 Hangul, weight 700) + 1–2 supporting
+  lines (≤ 35 Hangul each)
+- Chart labels: number in Latin-shaped run (e.g. `3,420억`), unit in
+  Korean run (`원`, `명`, `건`). Never two-line labels.
+
+**Breathing page (transition / image-led / quote)**
+
+- 1 big image (≥ 50% of canvas)
+- 1 caption (≤ 25 Hangul)
+- Optional pull quote with curly Korean quotes `"…"`; attribution under it
+- Never combine a quote with bullets
+
+### K.4 Hangul-safe component patterns
+
+The following layouts work well with Hangul; deviations need a strong
+design reason.
+
+- **Cover**: top-left brand mark (small), centered headline, supporting
+  line below, date in top-right or bottom-right (`2026. Q3` or
+  `2026년 3분기`). Avoid all-caps Korean — Hangul has no case; an
+  all-caps treatment reads as visually shouted Latin loanwords only.
+- **Section divider**: large numeral on left (English digit `02` or
+  Korean `둘째` — pick one per deck), Korean heading on right, hairline
+  rule between them.
+- **Two-column content**: 60/40 split with the heavier column carrying
+  Korean text; 50/50 is acceptable only when text density is matched.
+- **Pull-out stat**: huge number + tiny Korean unit + 1-line Korean
+  caption below. Put the number in a Latin face (Pretendard 900 or Inter)
+  and the unit in the Korean body face.
+
+### K.5 What MUST stay English inside the SVG
+
+Per the runtime directive (Track A):
+
+- SVG attribute names (`viewBox`, `fill`, `stroke`, `font-family`, …)
+- CSS property names inside `style=""`
+- `<g data-page-type="cover">`, `data-icon="…"`, `data-slot="…"` —
+  slot identifiers, icon refs, data-attribute keys
+- Asset URLs (`href="hero_q3_revenue.png"`, never `매출_커버.png`)
+- Filter / pattern / clipPath ids (`id="grid-2x2"`, never `id="격자"`)
+- Color tokens in CSS variables (`var(--primary)`)
+
+Hangul belongs only in `<text>` and `<tspan>` content, and in YAML/JSON
+string *values* (never keys) inside any embedded JSON.
+
+### K.6 Speaker notes (Korean decks)
+
+Speaker notes accompany each SVG via `notes/slide_NN_<slug>.md`. For
+Korean decks:
+
+- Plain Korean prose. Use `#` for page heading; avoid deeper markdown
+  hierarchy.
+- Polite-formal speech endings (`-습니다 / -입니다`) unless the brief
+  explicitly asks for casual (`-이다 / -지요`).
+- Speaker cues in `[]` brackets when relevant: `[화면 강조]`, `[웃음]`,
+  `[잠시 멈춤]`.
+- Numbers / units: digit + Korean unit (`3,420억 원`); spell out only
+  for dramatic delivery.
+- Length budget: ~120–180 Hangul syllables per slide for a 60-second
+  delivery; halve it for a 30-second deck.

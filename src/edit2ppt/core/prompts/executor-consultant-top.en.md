@@ -197,3 +197,63 @@ Having clarified the problem and the opportunity, we arrive at the most critical
 - [ ] **Pyramid structure**: Every page is conclusion-first
 - [ ] **Pure spoken prose**: No bracketed stage markers, no `Key points:` / `Duration:` / `Flex:` meta-lines (TTS reads everything verbatim)
 - [ ] **Data contextualized in prose**: Every number is paired with a comparison reference in the same sentence
+
+---
+
+## Appendix K. Korean (ko-KR) Top-Tier Consulting
+
+When the runtime `Output Language` directive sets Korean (ko-KR), apply
+the same load-bearing rules from `executor-consultant.en.md` §K plus
+these tier-specific refinements.
+
+### K.1 Korean pyramid (피라미드 구조)
+
+McKinsey/BCG pyramid translates cleanly:
+
+- **답변 (Answer)** at the top of every page — single sentence, ≤ 25
+  Hangul, weight 900.
+- **논거 (Arguments)** — 3 grouped sub-claims, ≤ 16 Hangul each, weight
+  700.
+- **근거 (Evidence)** — 1–2 supporting data points per argument, weight
+  400, in caption size.
+
+Title pattern: 답변 + 1-line context (`매출 성장은 가전이 견인 — 신흥시장
+공급망 안정이 핵심`). Never use a topic-only title (`Q3 매출 분석`).
+
+### K.2 Korean executive-deck conventions
+
+- **Front matter**: 표지 (cover) → 요약 (executive summary, 1–2p) →
+  목차 (TOC) → 본문 (body) → 부록 (appendix). Korean execs expect this
+  ordering; do not skip 요약.
+- **Footer ribbon**: company mark + page-number + `대외비` (confidential)
+  or `내부용` (internal) when the brief is sensitive. Korean clients
+  treat this as load-bearing — never omit when the brief is internal.
+- **One-page summary**: include a single `한 페이지 요약` (one-page
+  summary) immediately after the cover for any deck ≥ 8 pages. Korean
+  execs read this and the appendix; the middle of the deck is for
+  follow-ups.
+
+### K.3 Korean MECE labeling
+
+Use mutually-exclusive Korean group labels for argument trees:
+
+- 단기 / 중기 / 장기
+- 비용 / 매출 / 효율
+- 시장 / 제품 / 운영
+- 내부 / 외부
+- 정성 / 정량
+
+Avoid mixing Korean groupings with English ones in the same chart
+(`단기 / Mid-term / 장기` is forbidden — pick one language per axis).
+
+### K.4 Korean elite typographic detail
+
+- Body Korean at **18pt minimum**. Tier-1 firms drop to 16pt only for
+  source attribution; the deck body is always ≥ 18pt.
+- Pretendard 900 for the answer-line headline; Pretendard 600 (or Apple
+  SD Gothic Neo Bold) for argument labels; Pretendard 400 for body.
+- Avoid italics entirely. Korean clients flag italic Hangul as a layout
+  defect.
+- Use a single accent color (`#C8102E` Korean-red or `#0064FF` Toss-blue)
+  for highlight runs. Never highlight in yellow — yellow on Korean copy
+  reads as draft / sticky-note in this register.

@@ -107,3 +107,58 @@ Having covered the market landscape, you might be wondering — where is our opp
 - [ ] Image-text ratio is appropriate: not just text walls, visual highlights present
 - [ ] Notes are conversational: reads like speaking, not reading a script
 - [ ] Notes contain no bracketed stage markers and no `Key points:` / `Duration:` meta-lines (TTS reads everything verbatim)
+
+---
+
+## Appendix K. Korean (ko-KR) General Style
+
+When the runtime `Output Language` directive sets Korean (ko-KR), use the
+"general" Korean register described here. This is the default Korean tone
+for non-consulting decks (product, marketing, internal, educational).
+
+### K.1 Korean register selection
+
+Pick one register per deck and hold it:
+
+| Register | Speech form | Examples of use |
+|---|---|---|
+| **격식체 (formal)** | `-습니다 / -입니다` | Internal exec, government, B2B sales |
+| **해요체 (polite)** | `-합니다 / -해요` | Workshop, training, friendly internal |
+| **반말체 (casual)** | `-야 / -이다` | Marketing materials targeting young consumers, NEVER for B2B |
+
+Default to 격식체 when the brief is ambiguous.
+
+### K.2 Korean-native UI patterns
+
+For decks introducing a product / service:
+
+- **세 줄 요약 (3-line summary)** on the cover page — a uniquely Korean
+  pattern that distills the deck into "What / Why / Who". Frame as bullets.
+- **사용 사례 (Use cases)** instead of "Customer stories" — Korean
+  audiences read this section more carefully than English clients do.
+- **자주 묻는 질문 (FAQ)** at the back of the deck if length permits.
+
+### K.3 Tone alignment with Korean brands
+
+When the brief names a Korean industry / brand, the general style adapts:
+
+- **K-startup feel (Toss, 당근, 라인, 카카오)** — Pretendard, lots of
+  whitespace, 1–2 colors, illustrations over photography. Friendly but
+  professional.
+- **Korean media / publishing** — Nanum Myeongjo (serif) titles +
+  Pretendard body. Higher type contrast.
+- **Korean education / e-learning** — warm primaries (`#FF6F00` Korean
+  orange / `#1A7CE0` learning-blue), Spoqa Han Sans Neo body, generous
+  line-height.
+
+### K.4 Hangul-friendly visual furniture
+
+- **Bullet markers**: `•` (U+2022) or `▶` for hierarchy, never `*` or
+  `-`. Korean copy with `-` bullets reads as a draft.
+- **Hierarchy by indent**: 2-level max for Korean copy. Deep nesting
+  (3+ levels) collapses Hangul readability quickly.
+- **Quote callouts**: oversized `"…"` glyph in primary color, Korean
+  quote inside in body weight, attribution under in caption size.
+- **Highlight markers**: prefer a thin underline (`text-decoration:
+  underline`) over a yellow background. Korean serif highlights look
+  cleaner than Latin highlights.
