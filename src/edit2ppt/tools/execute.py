@@ -113,6 +113,13 @@ async def execute_batch(
     *,
     client: LLMCallable | None = None,
 ) -> ExecuteBatchResponse:
+    """Run every page in parallel under a concurrency cap.
+
+    Per-page exceptions are captured and surfaced as warnings (the failed
+    page gets a placeholder SVG so subsequent stages — quality, export —
+    still see N slides). This preserves the rest of the deck when one
+    Executor call goes sideways.
+    """
     started = time.perf_counter()
     sem = asyncio.Semaphore(req.max_concurrency)
 
@@ -120,10 +127,29 @@ async def execute_batch(
         async with sem:
             return await execute_page(p, client=client)
 
-    results = await asyncio.gather(*[_run_one(p) for p in req.pages])
+    raw_results = await asyncio.gather(
+        *[_run_one(p) for p in req.pages], return_exceptions=True
+    )
+
+    results: list[ExecutePageResponse] = []
+    warnings: list[WarningEntry] = []
+    for page_req, outcome in zip(req.pages, raw_results):
+        if isinstance(outcome, Exception):
+            warnings.append(
+                WarningEntry(
+                    code="execute_page_failed",
+                    message=f"Page {page_req.page_index} executor failed: {outcome}",
+                    detail={
+                        "page_index": page_req.page_index,
+                        "error_type": type(outcome).__name__,
+                    },
+                )
+            )
+            results.append(_placeholder_response(page_req))
+        else:
+            results.append(outcome)
 
     total = CostBreakdown(duration_seconds=time.perf_counter() - started)
-    warnings: list[WarningEntry] = []
     for r in results:
         total = CostBreakdown(
             input_tokens=total.input_tokens + r.cost.input_tokens,
@@ -138,6 +164,28 @@ async def execute_batch(
         results=sorted(results, key=lambda r: r.page_index),
         cost=total,
         warnings=warnings,
+    )
+
+
+def _placeholder_response(req: ExecutePageRequest) -> ExecutePageResponse:
+    """Minimal valid SVG used when an executor call fails. Keeps the deck
+    aligned to N slides so quality / export still run cleanly."""
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" '
+        'width="1920" height="1080">'
+        '<rect x="0" y="0" width="1920" height="1080" fill="#fafafa"/>'
+        f'<text x="120" y="540" font-family="sans-serif" font-size="36" fill="#888">'
+        f'Page {req.page_index + 1} could not be generated.'
+        '</text>'
+        '</svg>'
+    )
+    return ExecutePageResponse(
+        page_index=req.page_index,
+        svg=svg,
+        speaker_notes="",
+        raw_output="",
+        cost=CostBreakdown(),
+        warnings=[],
     )
 
 

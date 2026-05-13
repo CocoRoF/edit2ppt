@@ -204,24 +204,31 @@ class TestExecute:
         assert any(w.code == "unfenced_svg" for w in page.warnings)
 
     @pytest.mark.asyncio
-    async def test_missing_svg_raises(self):
+    async def test_missing_svg_surfaces_warning_not_exception(self):
+        """After C3 (partial-result preservation), per-page failures don't
+        propagate — they record an `execute_page_failed` warning and place
+        a placeholder SVG so subsequent stages still see N slides."""
         llm = StubLLM(responses=["nothing here, just text"])
-        with pytest.raises(ValueError, match="SVG"):
-            await execute_batch(
-                ExecuteBatchRequest(
-                    spec_lock="x",
-                    pages=[
-                        ExecutePageRequest(
-                            spec_lock="x",
-                            page_index=0,
-                            page_summary="x",
-                            lang="ko-KR",
-                            anthropic_api_key="stub",
-                        )
-                    ],
-                ),
-                client=llm,
-            )
+        batch = await execute_batch(
+            ExecuteBatchRequest(
+                spec_lock="x",
+                pages=[
+                    ExecutePageRequest(
+                        spec_lock="x",
+                        page_index=0,
+                        page_summary="x",
+                        lang="ko-KR",
+                        anthropic_api_key="stub",
+                    )
+                ],
+            ),
+            client=llm,
+        )
+        assert len(batch.results) == 1
+        # Placeholder SVG content is recognizable.
+        assert "could not be generated" in batch.results[0].svg
+        codes = {w.code for w in batch.warnings}
+        assert "execute_page_failed" in codes
 
 
 # ---------------------------------------------------------------------------
