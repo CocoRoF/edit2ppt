@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from urllib import error, request
 
-from tts_backends.backend_common import read_api_key
+from .backend_common import read_api_key
 
 
 API_BASE = "https://api.elevenlabs.io/v1"

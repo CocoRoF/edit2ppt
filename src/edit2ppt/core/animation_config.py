@@ -26,7 +26,7 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
-from svg_to_pptx.animation_config import (  # noqa: E402
+from .svg_to_pptx.animation_config import (  # noqa: E402
     load_animation_config,
     validate_animation_config,
     write_scaffold,

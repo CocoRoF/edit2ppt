@@ -21,7 +21,7 @@ import time
 
 import requests
 
-from image_backends.backend_common import (
+from .backend_common import (
     MAX_RETRIES,
     detect_image_extension,
     http_error,

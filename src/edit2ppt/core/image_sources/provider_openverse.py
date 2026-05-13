@@ -16,7 +16,7 @@ if __name__ == "__main__" and any(arg in {"-h", "--help", "help"} for arg in sys
 
 import requests
 
-from image_sources.provider_common import (
+from .provider_common import (
     AssetCandidate,
     ImageSearchRequest,
     USER_AGENT,

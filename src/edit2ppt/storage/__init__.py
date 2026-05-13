@@ -21,11 +21,31 @@ __all__ = [
     "build_content_disposition",
     "InMemoryStorage",
     "get_default_storage",
+    "set_default_storage",
 ]
 
 
+_storage_override: ObjectStorage | None = None
+
+
+def set_default_storage(storage: ObjectStorage | None) -> None:
+    """Tests / dev tooling: swap the process-wide storage backend."""
+    global _storage_override
+    _storage_override = storage
+    # Drop any cached S3Storage so it doesn't stick around when we flip back.
+    if hasattr(get_default_storage, "_instance"):
+        delattr(get_default_storage, "_instance")
+
+
 def get_default_storage() -> ObjectStorage:
-    """Return a process-wide S3Storage singleton (production)."""
+    """Return the process-wide storage backend.
+
+    Order:
+    1. set_default_storage() override (used by tests + the FastAPI deps).
+    2. Cached S3Storage singleton (production).
+    """
+    if _storage_override is not None:
+        return _storage_override
     from .s3 import S3Storage  # local import to avoid aioboto3 at module load
 
     if not hasattr(get_default_storage, "_instance"):

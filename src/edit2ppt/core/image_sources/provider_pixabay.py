@@ -19,7 +19,7 @@ import os
 
 import requests
 
-from image_sources.provider_common import (
+from .provider_common import (
     AssetCandidate,
     ImageSearchRequest,
     LICENSE_TIER_NO_ATTRIBUTION,

@@ -21,7 +21,7 @@ import time
 import threading
 import requests
 
-from image_backends.backend_common import (
+from .backend_common import (
     MAX_RETRIES,
     is_rate_limit_error,
     normalize_image_size,

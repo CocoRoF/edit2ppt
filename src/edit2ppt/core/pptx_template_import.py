@@ -22,7 +22,7 @@ import argparse
 import json
 from pathlib import Path
 
-from template_import.manifest import build_manifest
+from .template_import.manifest import build_manifest
 
 
 def parse_args() -> argparse.Namespace:

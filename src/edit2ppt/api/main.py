@@ -28,6 +28,7 @@ from ..i18n import default_catalog
 from .dependencies import Catalog, RequestLocale
 from .errors import install_error_handlers
 from .routes import assets as assets_routes
+from .routes import jobs as jobs_routes
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ app = FastAPI(
 
 install_error_handlers(app)
 app.include_router(assets_routes.router)
+app.include_router(jobs_routes.router)
 
 
 # ---------------------------------------------------------------------------

@@ -45,7 +45,7 @@ import os
 import sys
 import argparse
 
-from config import load_prefixed_env_file, resolve_env_path
+from .config import load_prefixed_env_file, resolve_env_path
 
 ENV_PATH = resolve_env_path()
 IMAGE_ENV_PREFIXES = (

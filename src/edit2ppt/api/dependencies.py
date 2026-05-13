@@ -43,9 +43,18 @@ _test_storage: ObjectStorage | None = None
 
 
 def set_test_storage(storage: ObjectStorage | None) -> None:
-    """Test hook: forces get_object_storage() to return *storage*."""
+    """Test hook: forces both the request-scoped dependency AND the
+    worker-side get_default_storage() to return *storage*.
+
+    Workers reach storage via `from ..storage import get_default_storage`
+    rather than the FastAPI dependency, so the override has to live at
+    both layers.
+    """
     global _test_storage
     _test_storage = storage
+    from ..storage import set_default_storage
+
+    set_default_storage(storage)
 
 
 def get_object_storage() -> ObjectStorage:
