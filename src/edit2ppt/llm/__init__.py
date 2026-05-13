@@ -1,7 +1,13 @@
 """LLM client + prompt loader for edit2ppt server-side orchestration."""
 
 from .anthropic_client import AnthropicClient, DEFAULT_MODEL, LLMResult, LLMUsage
-from .prompt_loader import KNOWN_ROLES, list_available_locales, load_prompt
+from .prompt_loader import (
+    KNOWN_ROLES,
+    build_output_lang_directive,
+    list_available_locales,
+    list_available_prompts,
+    load_prompt,
+)
 
 __all__ = [
     "AnthropicClient",
@@ -9,6 +15,8 @@ __all__ = [
     "LLMResult",
     "LLMUsage",
     "KNOWN_ROLES",
+    "build_output_lang_directive",
     "list_available_locales",
+    "list_available_prompts",
     "load_prompt",
 ]

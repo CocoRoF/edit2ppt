@@ -16,7 +16,7 @@ from typing import Protocol
 
 from pydantic import Field
 
-from ..llm import AnthropicClient, DEFAULT_MODEL, load_prompt
+from ..llm import AnthropicClient, DEFAULT_MODEL, build_output_lang_directive, load_prompt
 from ..llm.anthropic_client import LLMResult, LLMUsage
 from .types import (
     CanvasFormat,
@@ -84,7 +84,10 @@ async def strategize(
     started = time.perf_counter()
     warnings: list[WarningEntry] = []
 
-    system_prompt = load_prompt("strategist", req.lang)
+    # English single-source prompt + runtime language directive. The directive
+    # tells the model to emit user-facing strings in req.lang while keeping
+    # YAML / JSON keys English (Track A).
+    system_prompt = build_output_lang_directive(req.lang) + "\n\n" + load_prompt("strategist")
     user_message = _build_user_message(req)
 
     llm = client or AnthropicClient(api_key=req.anthropic_api_key, model=req.model)

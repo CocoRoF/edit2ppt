@@ -539,3 +539,116 @@ Next step:
 - Images include AI generation → Invoke Image_Generator
 - Otherwise → Invoke Executor (free design for every page)
 ```
+
+---
+
+## Appendix K. Korean (ko-KR) Output Specifics
+
+When the runtime `Output Language` directive at the top of this prompt sets
+Korean (ko-KR), apply the rules below **in addition to** the generic guidance
+already covered above. Do not delete or override the directive; it tells the
+model the deck's *content* language. This appendix tells the strategist the
+right *design* language to pair with it.
+
+### K.1 Korean typography stacks (replaces the §g CJK stacks)
+
+The §g "Cross-platform pre-installed reference" table is Chinese-leaning.
+For Korean decks pick from this Korean-first set instead:
+
+| Layer | Modern recommendation | Windows-safe substitute | macOS-only display face |
+|---|---|---|---|
+| Body (UI-style) | `Pretendard, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif` | `"Malgun Gothic", sans-serif` | `"Apple SD Gothic Neo"` |
+| Body (warm humanist) | `"Spoqa Han Sans Neo", "Noto Sans KR", "Malgun Gothic", sans-serif` | `"Malgun Gothic"` | — |
+| Title (impact) | `Pretendard 700/900, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif` | `"Malgun Gothic" Bold` | — |
+| Title (editorial / serif tension) | `"Nanum Myeongjo", "Batang", "Times New Roman", serif` | `Batang` | — |
+| Mono / code | `"D2 Coding", Consolas, "Courier New", monospace` | `Consolas` | — |
+
+**Hard rules for Korean decks:**
+
+1. **Lead with Pretendard (OFL).** It is freely embeddable, has weights 100–900,
+   has both display and text optical sizes (`Pretendard Variable`), and is
+   what every recent K-startup deck uses. Place it first in the stack.
+2. **Always end with `"Malgun Gothic"`** for Windows safety. PPTX has no
+   runtime fallback (see §g blocker) and `Malgun Gothic` is the only Hangul
+   font shipped with every recent Windows.
+3. **macOS-only fonts** (`Apple SD Gothic Neo`, `Nanum *`, brand korean
+   typefaces) are acceptable mid-stack thanks to the converter's
+   `FONT_FALLBACK_WIN` map (see [G3 fix](../svg_to_pptx/drawingml_utils.py)),
+   but must NOT be the *only* font in the stack.
+4. **No italic for Hangul.** Korean text never italicizes in production decks
+   — italic Hangul reads as broken-font noise. Use weight contrast (Regular
+   400 vs Bold 700/900) or color contrast instead. Latin loanwords inside
+   Korean copy may italicize using a Latin face only.
+5. **Letter-spacing**: tighten Korean body by `-1%` to `-3%` (`letter-spacing:
+   -0.01em` to `-0.03em`). Headlines often go `-3%` to `-6%`. Default web
+   spacing reads as gappy in Korean.
+6. **Line-height**: body `1.5`–`1.7`, headline `1.2`–`1.35`. Korean text
+   needs more vertical air than English at the same point size.
+
+### K.2 Korean industry / brand-tone palettes
+
+When the user names a Korean industry, conglomerate, or sector, lean into
+these palette + tone references (drop into §III/IV of design_spec.md):
+
+| Sector / Brand cue | Tone | Primary | Accent | Notes |
+|---|---|---|---|---|
+| Samsung Group (general) | Cool corporate, trustworthy | `#1428A0` (Samsung Blue) | white + soft grey | Clean grids, mid-blue + plenty of negative space |
+| Hyundai / Kia | Industrial confident | `#002C5F` (Hyundai navy) | `#00AAD2` accent | Tight typography, photography-forward |
+| Naver | Energetic green tech | `#03C75A` | `#1EC800` light, `#FFFFFF` | Pretendard + Nanum, friendly UI |
+| Kakao | Playful but precise | `#FEE500` (Kakao yellow) | `#3C1E1E` text on yellow | Headline weight contrast, rounded shapes OK |
+| Toss / Korean fintech | Minimal modern | `#0064FF` (Toss blue) or `#161616` | `#F5F6F7` light grey | Pretendard, generous spacing, line illustrations |
+| Coupang / e-commerce | Energetic red-orange | `#EA0028` | `#FFFFFF` + photography | High contrast, deal-pricing patterns |
+| Korean government / public sector | Authoritative formal | `#003478` (Korean navy) or `#003B5C` | `#C8102E` Korean red for emphasis only | Serif title (Batang or Nanum Myeongjo), Hangul-first |
+| Korean academic / 학회 발표 | Restrained scholarly | `#1F3A60` deep navy | warm grey + cream paper | Nanum Myeongjo titles, Pretendard body, simple charts |
+| Korean consulting (BCG/베인 한국, 삼정KPMG) | Sharp consultative | `#0F2A47` slate-navy + `#C8102E` Korean-consulting red | white + 1 photo per page | McKinsey-style waterfall + SCQA structure but **Pretendard / Apple SD Gothic Neo body**, not Bower |
+
+When in doubt, fall back to **Toss-style minimal** (`#0064FF` or near-black
+primary, white background, Pretendard 700 titles, 18–20pt body) — it is the
+contemporary Korean B2B default.
+
+### K.3 Page rhythm for Korean copy
+
+Korean characters average wider than Latin words: ≈ 11 Hangul syllables ≈
+1 line of typical body at 20pt / 1280px width. Calibrate page densities:
+
+| Page type | Hangul body lines (target) | Hangul body chars (rough cap) |
+|---|---|---|
+| Cover | 0 (title only) | — |
+| Section divider / chapter | 0–1 | ≤ 25 |
+| Anchor (single insight) | 1–2 | 30–50 per line |
+| Dense (data / matrix) | 4–8 | 35–55 per line |
+| Breathing (image + caption) | 1–3 | 30–45 per line |
+
+Cap any single Korean line at ~25 syllables for headlines, ~50 for body.
+Beyond that, line-wrap or restructure the bullet.
+
+### K.4 Korean date / number / quote conventions
+
+- **Dates** in Korean decks: `2026년 1분기` / `2026. Q1` / `2026-03` — pick
+  one per deck and stay consistent.
+- **Numbers**: Korean financial slides typically use `천 / 만 / 억 / 조`
+  units inline (e.g. `매출 3,420억 원`). Don't translate to `MM / B`.
+  English unit suffixes belong only in joint-language exec decks.
+- **Quotes**: Korean copy uses `「」`, `『』`, or curly `""` quotes
+  (`"…"` and `'…'` are also acceptable for casual decks). Avoid CJK
+  brackets `《》` — those read as Chinese.
+- **Korean numbering** for outlines: `1.`, `2.` etc. are fine; if you
+  need an honorific-tier list, use `①②③` (circled digits) sparingly for
+  callouts only, never as a primary bullet style.
+
+### K.5 What stays English in a Korean deck
+
+Per the runtime `Output Language` directive at the top of this prompt:
+
+- All YAML / JSON keys in `spec_lock.yaml` (`pages:`, `title:`, `subtitle:`,
+  `colors:`, `typography:`, `icons:`)
+- Layout / slot / template names (`cover`, `chapter`, `content_two_col`)
+- Asset filenames (`hero_q3_revenue.png`, not `매출_커버.png`)
+- Design tokens (`--primary`, `body-large`, `surface-1`)
+- Font family names in CSS-style stacks (always English in CSS; the rendered
+  Hangul comes from the user content)
+
+This is the Track A discipline from
+[ppt-master-analysis/06-bilingual-conventions.md](../../../ppt-master-analysis/06-bilingual-conventions.md):
+**filesystem / code / config keys in English, user-facing text in Korean.**
+
