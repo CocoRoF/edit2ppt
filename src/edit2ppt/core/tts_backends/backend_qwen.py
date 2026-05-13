@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from tts_backends.backend_common import download_audio, post_json, read_api_key
+from .backend_common import download_audio, post_json, read_api_key
 
 
 DEFAULT_ENDPOINT = "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"

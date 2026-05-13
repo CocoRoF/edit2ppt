@@ -32,7 +32,7 @@ import threading
 from collections.abc import Mapping
 
 from openai import OpenAI
-from image_backends.backend_common import (
+from .backend_common import (
     MAX_RETRIES,
     download_image,
     is_rate_limit_error,

@@ -6,7 +6,7 @@ import binascii
 import os
 from pathlib import Path
 
-from tts_backends.backend_common import extension_from_format, post_json, read_api_key
+from .backend_common import extension_from_format, post_json, read_api_key
 
 
 DEFAULT_ENDPOINT = "https://api.minimaxi.com/v1/t2a_v2"

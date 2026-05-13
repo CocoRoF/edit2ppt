@@ -44,6 +44,6 @@ def register(kind: JobKind):
     return _wrap
 
 
-# Make sure the noop executor (and later, real ones) is imported so the
-# registry is populated by the time the worker starts up.
-from . import noop  # noqa: F401, E402  (re-export for side effect)
+# Import every executor module so its @register call populates EXECUTORS at
+# the time the worker starts up.
+from . import generate_deck, noop  # noqa: F401, E402  (re-export for side effect)

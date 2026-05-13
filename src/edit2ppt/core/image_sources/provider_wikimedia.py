@@ -23,7 +23,7 @@ import re
 
 import requests
 
-from image_sources.provider_common import (
+from .provider_common import (
     AssetCandidate,
     ImageSearchRequest,
     USER_AGENT,

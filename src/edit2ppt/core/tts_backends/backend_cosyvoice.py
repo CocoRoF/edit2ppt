@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from tts_backends.backend_common import download_audio, extension_from_format, post_json, read_api_key
+from .backend_common import download_audio, extension_from_format, post_json, read_api_key
 
 
 DEFAULT_ENDPOINT = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer"

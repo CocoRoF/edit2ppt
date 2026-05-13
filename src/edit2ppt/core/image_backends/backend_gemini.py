@@ -26,7 +26,7 @@ import time
 import threading
 from google import genai
 from google.genai import types
-from image_backends.backend_common import (
+from .backend_common import (
     MAX_RETRIES,
     is_rate_limit_error,
     normalize_image_size,

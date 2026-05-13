@@ -41,11 +41,11 @@ from pathlib import Path
 
 # Import finalize helpers from the internal package.
 sys.path.insert(0, str(Path(__file__).parent))
-from svg_finalize.align_embed_images import (
+from .svg_finalize.align_embed_images import (
     align_and_embed_images_in_svg,
     count_office_vector_refs_in_svg,
 )
-from svg_finalize.embed_icons import process_svg_file as embed_icons_in_file
+from .svg_finalize.embed_icons import process_svg_file as embed_icons_in_file
 
 
 def safe_print(text: str) -> None:
