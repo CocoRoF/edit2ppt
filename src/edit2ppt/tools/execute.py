@@ -96,6 +96,12 @@ async def execute_page(
     )
 
     svg, notes = _parse_output(result.text, warnings)
+    # Backfill missing `id` on top-level <g> children. Quality runs on
+    # the executor's output verbatim; without this every anonymous
+    # decorative group produces a `Top-level visible <g> #N has no id`
+    # warning. Doing it here means the same normalised SVG flows
+    # through quality, retry, export, and the final PPTX.
+    svg = _autoid_top_level_groups(svg)
 
     return ExecutePageResponse(
         page_index=req.page_index,
@@ -263,6 +269,39 @@ def _parse_output(text: str, warnings: list[WarningEntry]) -> tuple[str, str]:
     notes_match = _NOTES_BLOCK_RE.search(text)
     notes = notes_match.group(1).strip() if notes_match else ""
     return svg, notes
+
+
+def _autoid_top_level_groups(svg: str) -> str:
+    """Backfill `id` on every top-level <g> of *svg* that lacks one.
+
+    Runs at the boundary where the LLM's raw SVG enters the pipeline.
+    Quality, retry, export and the final PPTX all see the normalized
+    text — eliminates the spammy `Top-level visible <g> #N has no id`
+    warnings without changing the LLM's behaviour or the visible
+    output.
+
+    Best-effort: if the SVG fails to parse we return it untouched and
+    let the downstream stages report the real error.
+    """
+    if not svg or "<svg" not in svg:
+        return svg
+    try:
+        from xml.etree import ElementTree as ET
+
+        from ..core.svg_to_pptx.drawingml_converter import (
+            _autogen_top_level_group_ids,
+        )
+
+        root = ET.fromstring(svg)
+        if _autogen_top_level_group_ids(root) == 0:
+            return svg
+        # Preserve the `xmlns` declaration in the serialized output —
+        # ElementTree drops the namespace prefix when re-serialising,
+        # so we explicitly re-register the default SVG namespace.
+        ET.register_namespace("", "http://www.w3.org/2000/svg")
+        return ET.tostring(root, encoding="unicode")
+    except Exception:
+        return svg
 
 
 def _cost_from_usage(usage: LLMUsage, duration_seconds: float) -> CostBreakdown:
