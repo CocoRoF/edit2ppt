@@ -295,6 +295,63 @@ class TestPagePlanParsing:
         assert "두 가지 길" in chunks[0]
         assert "P10" in chunks[-1]
 
+    def test_markdown_heading_with_p_id_prefix(self):
+        """The format that failed in iteration #4: `#### P01. 커버`
+        markdown headings under `## IX. 콘텐츠 아웃라인 (Content Outline)`,
+        with chapter subsections (`### Chapter 1: Opening`) between."""
+        spec = (
+            "## IX. 콘텐츠 아웃라인 (Content Outline)\n\n"
+            "### Chapter 1: Opening\n\n"
+            "#### P01. 커버\n"
+            "- 레이아웃: 풀블리드\n\n"
+            "#### P02. 현실 진단 — AI는 이미 여기 있다\n"
+            "- 레이아웃: 헤로 인용 + 보조 통계\n\n"
+            "#### P03. AI 코딩 능력의 진화\n"
+            "- 레이아웃: 타임라인 (3 step)\n\n"
+            "### Chapter 2: 위기의 본질\n\n"
+            "#### P04. 5단계 위기\n"
+            "- 레이아웃: 단계 카드\n\n"
+            "#### P05. 살아남는 vs 사라지는\n"
+            "- 레이아웃: 좌우 비교\n"
+        )
+        chunks = _split_page_plan(spec, "")
+        assert len(chunks) == 5
+        assert "커버" in chunks[0]
+        assert "현실 진단" in chunks[1]
+        assert "타임라인" in chunks[2]
+        assert "5단계" in chunks[3]
+        assert "사라지는" in chunks[4]
+
+    def test_outline_scoping_avoids_inline_p_id_mentions(self):
+        """Prose in earlier sections may mention P01/P02; the outline-
+        scoped scan must ignore those false positives once it finds the
+        actual §IX. Content Outline section."""
+        spec = (
+            "## I. Project Info\n\n"
+            "이 발표는 10페이지로 구성되며 P01-P10 으로 명명됩니다.\n\n"
+            "## V. Layout Principles\n\n"
+            "P01 은 풀블리드, P10 은 호흡형 레이아웃을 권장합니다.\n\n"
+            "## IX. Content Outline\n\n"
+            "#### P01. 커버\n- 레이아웃: 풀블리드\n\n"
+            "#### P02. 도입\n- 레이아웃: 호흡형\n"
+        )
+        chunks = _split_page_plan(spec, "")
+        assert len(chunks) == 2
+        # The prose mentions of P01 / P10 in §I and §V must not register
+        # as page boundaries — confined scan starts at §IX.
+        assert "커버" in chunks[0]
+        assert "도입" in chunks[1]
+
+    def test_outline_section_with_only_roman_numeral(self):
+        """`## IX 콘텐츠 아웃라인` without the period after IX should also
+        be recognized as the outline section start."""
+        spec = (
+            "## IX 콘텐츠 아웃라인\n\n"
+            "#### P01. 커버\n- a\n#### P02. 본문\n- b\n#### P03. 결론\n- c\n"
+        )
+        chunks = _split_page_plan(spec, "")
+        assert len(chunks) == 3
+
 
 # ---------------------------------------------------------------------------
 # execute_batch partial-result preservation
