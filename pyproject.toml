@@ -28,8 +28,10 @@ dependencies = [
     # Storage
     "aioboto3>=13.2.0",
     "botocore>=1.35.0",
-    # Database (M0 stub uses SQLAlchemy + asyncpg; full migrations come in M0.5)
+    # Database. Standalone mode (the default) uses SQLite via aiosqlite;
+    # `EDIT2PPT_DATABASE_URL=postgresql+asyncpg://...` switches to Postgres.
     "sqlalchemy[asyncio]>=2.0.36",
+    "aiosqlite>=0.20.0",
     "asyncpg>=0.30.0",
     "alembic>=1.14.0",
     # Job queue
