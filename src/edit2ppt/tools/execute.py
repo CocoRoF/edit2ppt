@@ -91,7 +91,6 @@ async def execute_page(
         system_prompt=system_prompt,
         user_message=user_message,
         max_output_tokens=8192,
-        temperature=0.4,
         cache_system=True,
         model=req.model,
     )

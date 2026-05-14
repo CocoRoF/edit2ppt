@@ -217,6 +217,16 @@ async def _run_inline(job_id: uuid.UUID) -> None:
             job.status = JobStatus.failed
             job.error_message = str(exc)
             await session.commit()
+        finally:
+            # Wake any SSE subscribers so they can drain and disconnect.
+            # FakeJobBus exposes close(); RedisJobBus relies on connection
+            # teardown instead, so this is best-effort.
+            close = getattr(bus, "close", None)
+            if close is not None:
+                try:
+                    await close(job_id)
+                except Exception:
+                    logger.exception("inline runner: bus.close failed for job %s", job_id)
 
 
 @router.get(

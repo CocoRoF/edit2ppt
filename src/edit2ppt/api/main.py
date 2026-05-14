@@ -80,6 +80,14 @@ async def lifespan(app: FastAPI):
             )
             app.state.arq_pool = None
 
+    # JobBus selection. In inline mode there is exactly one process producing
+    # and consuming events, so an in-memory bus is the right shape — no
+    # Redis required. In arq mode, leave the default (RedisJobBus) alone.
+    if app.state.arq_pool is None:
+        from ..services.jobs import FakeJobBus, set_default_bus
+
+        set_default_bus(FakeJobBus())
+
     yield
 
     if app.state.arq_pool is not None:
