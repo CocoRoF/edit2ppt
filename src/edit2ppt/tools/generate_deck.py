@@ -27,8 +27,11 @@ Each stage emits a `StageEvent` via the `on_event` callback so callers
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import time
+
+logger = logging.getLogger(__name__)
 from typing import Awaitable, Callable, Literal
 
 from pydantic import Field
@@ -216,6 +219,19 @@ async def generate_deck(
 
     page_summaries = _split_page_plan(strat.design_spec, strat.spec_lock)
     if not page_summaries:
+        # Surface enough of the Strategist response to actually diagnose
+        # the failure — without this the operator has no signal beyond
+        # "executor never ran". Trim to ~3 KB so a runaway response
+        # doesn't flood the logs.
+        raw_excerpt = (strat.raw_output or "")[:3000]
+        logger.error(
+            "Strategist output did not yield any page summaries.\n"
+            "design_spec length=%d, spec_lock length=%d.\n"
+            "raw_output[:3000]=\n%s",
+            len(strat.design_spec or ""),
+            len(strat.spec_lock or ""),
+            raw_excerpt,
+        )
         raise RuntimeError(
             "Strategist output did not yield any page summaries; "
             "cannot run executor. Inspect strat.raw_output."
@@ -580,13 +596,16 @@ def _ext_for_mime(mime_type: str) -> str:
 # so that the most specific (Page/Slide/페이지/슬라이드 + index) wins first;
 # numbered fallback (`## 1.` / `## 1) Title`) catches templates that drop
 # the keyword. All patterns are case-insensitive and anchored to a line start.
+# The depth range 1–6 covers Markdown's full heading scale — the reference
+# design_spec template emits page outlines as h4 (`#### Slide 01 - Cover`)
+# under `## IX. Content Outline` / `### Part 1: Chapter`.
 _PAGE_HEADING_PATTERNS = [
     # `## Page 1`, `## Page-1`, `## Page #1`, `## Page: 1`
-    r"^#{1,3}\s+(?:Page|Slide|페이지|슬라이드|ページ|スライド)[\s\-:#]*\d+",
+    r"^#{1,6}\s+(?:Page|Slide|페이지|슬라이드|ページ|スライド)[\s\-:#]*\d+",
     # `## Slide 1: Title`  / `## 페이지 1 — 표지`
-    r"^#{1,3}\s+(?:Page|Slide|페이지|슬라이드|ページ|スライド)\s+\d+[\s\-:—:]",
+    r"^#{1,6}\s+(?:Page|Slide|페이지|슬라이드|ページ|スライド)\s+\d+[\s\-:—:]",
     # Numbered heading without a keyword: `## 1.`, `## 1)`, `## 1 - Title`
-    r"^#{1,3}\s+\d+[\.\)\-]\s",
+    r"^#{1,6}\s+\d+[\.\)\-]\s",
 ]
 _PAGE_HEADING_RE = re.compile(
     "|".join(f"(?:{p})" for p in _PAGE_HEADING_PATTERNS),
@@ -611,7 +630,16 @@ def _split_page_plan(design_spec: str, spec_lock: str) -> list[str]:
         positions.append(len(design_spec))
         return [design_spec[positions[i] : positions[i + 1]].strip() for i in range(len(positions) - 1)]
 
-    # Fallback: hunt for YAML page entries in spec_lock.
+    # Fallback 1: parse spec_lock as actual YAML and harvest any top-level
+    # collection that walks like a page list. Robust against indentation
+    # / wrapping quirks that broke the older line-walker.
+    yaml_chunks = _pages_from_spec_lock_yaml(spec_lock)
+    if yaml_chunks:
+        return yaml_chunks
+
+    # Fallback 2: legacy line-walker over spec_lock's `pages:` block. Kept
+    # for spec_lock variants that aren't quite parseable YAML (e.g. when
+    # the Strategist wraps inline maps oddly).
     chunks: list[str] = []
     in_pages = False
     current: list[str] = []
@@ -635,6 +663,49 @@ def _split_page_plan(design_spec: str, spec_lock: str) -> list[str]:
     if current:
         chunks.append("\n".join(current).strip())
     return [c for c in chunks if c]
+
+
+def _pages_from_spec_lock_yaml(spec_lock: str) -> list[str]:
+    """Locate a page-list-shaped collection inside spec_lock and return one
+    string summary per entry.
+
+    Accepts any of these top-level keys (and a few synonyms the Strategist
+    sometimes invents): `pages`, `page_rhythm`, `page_layouts`, `outline`,
+    `slides`. The first key whose value is a non-empty list is taken.
+    """
+    if not spec_lock.strip():
+        return []
+    try:
+        import yaml
+    except ImportError:  # pragma: no cover - pyyaml is a hard dep
+        return []
+    try:
+        doc = yaml.safe_load(spec_lock)
+    except yaml.YAMLError:
+        return []
+    if not isinstance(doc, dict):
+        return []
+    for key in ("pages", "page_rhythm", "page_layouts", "outline", "slides"):
+        value = doc.get(key)
+        if isinstance(value, list) and value:
+            return [_yaml_entry_to_summary(item) for item in value if item is not None]
+    return []
+
+
+def _yaml_entry_to_summary(item: object) -> str:
+    """Render a YAML list entry as a markdown-ish summary the Executor
+    can read. Scalars become themselves; dicts become a `key: value`
+    bullet list."""
+    if isinstance(item, str):
+        return item.strip()
+    if isinstance(item, dict):
+        import yaml  # local import; cheap when the call site already
+        # decided this path is in play.
+        try:
+            return yaml.safe_dump(item, allow_unicode=True, sort_keys=False).strip()
+        except yaml.YAMLError:
+            return repr(item)
+    return str(item)
 
 
 async def _emit(callback: EventCallback, event: StageEvent) -> None:
