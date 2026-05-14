@@ -53,7 +53,13 @@ router = APIRouter(prefix="/v1/jobs", tags=["jobs"])
 class GenerateDeckBody(BaseModel):
     """Body for POST /v1/jobs/generate-deck."""
 
-    source_asset_ids: list[uuid.UUID] = Field(..., min_length=1, description="Asset ids from /v1/assets")
+    source_asset_ids: list[uuid.UUID] = Field(
+        default_factory=list,
+        description=(
+            "Asset ids from /v1/assets. May be empty — the Strategist will "
+            "design the deck from `user_intent` alone (topic-only / chat mode)."
+        ),
+    )
     user_intent: str = Field(..., description="What the deck is for. Korean / any language welcome.")
     target_pages: tuple[int, int] = (8, 12)
     canvas_format: str = "ppt169"

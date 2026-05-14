@@ -246,9 +246,9 @@ def build_mcp_server(context: MCPContext | None = None) -> FastMCP:
         ),
     )
     async def generate_deck_tool(
-        source_asset_ids: list[str],
         user_intent: str,
         anthropic_api_key: str,
+        source_asset_ids: list[str] | None = None,
         target_min_pages: int = 8,
         target_max_pages: int = 12,
         lang: str = "ko-KR",
@@ -265,8 +265,9 @@ def build_mcp_server(context: MCPContext | None = None) -> FastMCP:
         narration_use_timings: bool = False,
         mcp_ctx: Context | None = None,
     ) -> dict[str, Any]:
-        if not source_asset_ids:
-            raise AssetError("source_asset_ids must contain at least one id.")
+        # `source_asset_ids` is optional. When empty the Strategist designs
+        # the deck from `user_intent` alone (chat / topic-only mode).
+        source_asset_ids = source_asset_ids or []
         if not anthropic_api_key:
             raise AssetError(
                 "anthropic_api_key is required. Pass it on this call only — "

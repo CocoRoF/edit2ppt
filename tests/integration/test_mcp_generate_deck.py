@@ -147,13 +147,14 @@ class TestValidation:
             )
 
     @pytest.mark.asyncio
-    async def test_empty_sources_errors(self, server):
-        with pytest.raises(Exception, match="source_asset_ids"):
+    async def test_empty_user_intent_errors(self, server):
+        """`user_intent` is the only required input — empty intent must reject."""
+        with pytest.raises(Exception, match="user_intent|min_length|String should"):
             await server.call_tool(
                 "generate_deck",
                 {
                     "source_asset_ids": [],
-                    "user_intent": "x",
+                    "user_intent": "",
                     "anthropic_api_key": "sk-ant-stub",
                 },
             )
