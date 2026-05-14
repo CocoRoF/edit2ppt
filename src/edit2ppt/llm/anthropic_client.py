@@ -112,23 +112,31 @@ class AnthropicClient:
         user_message: str,
         *,
         max_output_tokens: int = 8192,
-        temperature: float = 0.6,
+        temperature: float | None = None,
         cache_system: bool = True,
         model: str | None = None,
     ) -> LLMResult:
-        """One-shot completion with optional system-prompt caching."""
+        """One-shot completion with optional system-prompt caching.
+
+        `temperature` is optional and intentionally omitted from the SDK
+        call when None — recent Claude models (Opus 4.5+) reject the
+        parameter outright with `temperature is deprecated for this model`.
+        """
         client = self._ensure_client()
         system_blocks: list[dict[str, Any]] = [{"type": "text", "text": system_prompt}]
         if cache_system:
             system_blocks[0]["cache_control"] = {"type": "ephemeral"}
 
-        response = await client.messages.create(
-            model=model or self._model,
-            max_tokens=max_output_tokens,
-            temperature=temperature,
-            system=system_blocks,
-            messages=[{"role": "user", "content": user_message}],
-        )
+        create_kwargs: dict[str, Any] = {
+            "model": model or self._model,
+            "max_tokens": max_output_tokens,
+            "system": system_blocks,
+            "messages": [{"role": "user", "content": user_message}],
+        }
+        if temperature is not None:
+            create_kwargs["temperature"] = temperature
+
+        response = await client.messages.create(**create_kwargs)
         usage = _extract_usage(response)
         text = _extract_text(response)
         return LLMResult(

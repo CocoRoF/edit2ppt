@@ -98,7 +98,6 @@ async def strategize(
         system_prompt=system_prompt,
         user_message=user_message,
         max_output_tokens=8192,
-        temperature=0.6,
         cache_system=True,
         model=req.model,
     )
