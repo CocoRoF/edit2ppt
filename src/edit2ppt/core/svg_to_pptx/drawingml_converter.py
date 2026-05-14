@@ -353,6 +353,16 @@ def convert_svg_to_slide_shapes(
     if flatten_positional_tspans(tree) and verbose:
         print('  Flattened positional <tspan> into independent <text>')
 
+    # Inline standard SVG <use href="#id"/> references — LLM-emitted SVGs
+    # commonly define a glyph/icon once in <defs> and re-use it from each
+    # slide. The native DrawingML dispatcher cannot follow <use>, so we
+    # rewrite them into deep-copied <g> subtrees here. Unresolvable
+    # references are left in place and surfaced by the check below.
+    from .use_href_expander import expand_use_href
+    expanded_href = expand_use_href(root)
+    if verbose and expanded_href:
+        print(f'  Expanded {expanded_href} standard <use href="#..."/> reference(s)')
+
     unsupported = _collect_unsupported_visuals(root)
     if unsupported:
         preview = '; '.join(unsupported[:8])
