@@ -93,8 +93,10 @@ EventCallback = Callable[[StageEvent], Awaitable[None]] | Callable[[StageEvent],
 
 
 class GenerateDeckRequest(ToolRequest):
-    sources: list[ConvertRequest]
-    user_intent: str
+    # 0 or more source documents. When empty, the Strategist designs from
+    # `user_intent` alone — the topic-only / "just chat" path.
+    sources: list[ConvertRequest] = Field(default_factory=list)
+    user_intent: str = Field(..., min_length=1)
     target_pages: tuple[int, int] = (8, 12)
     canvas_format: CanvasFormat = DEFAULT_CANVAS
     style: ExecutorStyle = "general"
@@ -173,18 +175,21 @@ async def generate_deck(
 
     await _emit(on_event, StageEvent(stage="queued", progress=0.0, message_key="stages.queued"))
 
-    # Stage 1: convert sources (parallel)
-    await _emit(
-        on_event,
-        StageEvent(stage="converting", progress=0.05, message_key="stages.converting"),
-    )
-    convert_results = await asyncio.gather(
-        *(asyncio.to_thread(convert_to_markdown, src) for src in req.sources)
-    )
-    cost = _merge_cost(cost, *[r.cost for r in convert_results])
-    for r in convert_results:
-        warnings.extend(r.warnings)
-    sources_markdown = [r.markdown for r in convert_results]
+    # Stage 1: convert sources (parallel). Skipped entirely when the
+    # caller didn't supply any — the Strategist works from user_intent alone.
+    sources_markdown: list[str] = []
+    if req.sources:
+        await _emit(
+            on_event,
+            StageEvent(stage="converting", progress=0.05, message_key="stages.converting"),
+        )
+        convert_results = await asyncio.gather(
+            *(asyncio.to_thread(convert_to_markdown, src) for src in req.sources)
+        )
+        cost = _merge_cost(cost, *[r.cost for r in convert_results])
+        for r in convert_results:
+            warnings.extend(r.warnings)
+        sources_markdown = [r.markdown for r in convert_results]
 
     # Stage 2: strategize (LLM)
     await _emit(

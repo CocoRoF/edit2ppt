@@ -31,8 +31,11 @@ from .types import (
 
 
 class StrategizeRequest(ToolRequest):
-    sources_markdown: list[str] = Field(..., min_length=1)
-    user_intent: str
+    # 0 or more source documents (markdown). When empty, the Strategist works
+    # from `user_intent` alone — useful for "just generate a deck about X"
+    # chat-style flows.
+    sources_markdown: list[str] = Field(default_factory=list)
+    user_intent: str = Field(..., min_length=1)
     template_name: str | None = None
     target_pages: tuple[int, int] = Field(default=(8, 12))
     canvas_format: CanvasFormat = DEFAULT_CANVAS
@@ -128,13 +131,27 @@ def _build_user_message(req: StrategizeRequest) -> str:
     lines.append("# User intent")
     lines.append(req.user_intent.strip())
     lines.append("")
-    lines.append("# Sources")
-    for i, src in enumerate(req.sources_markdown, start=1):
-        lines.append(f"## Source {i}")
-        lines.append("```markdown")
-        lines.append(src.strip())
-        lines.append("```")
-    lines.append("")
+    if req.sources_markdown:
+        lines.append("# Sources")
+        for i, src in enumerate(req.sources_markdown, start=1):
+            lines.append(f"## Source {i}")
+            lines.append("```markdown")
+            lines.append(src.strip())
+            lines.append("```")
+        lines.append("")
+    else:
+        # "Topic-only" / chat mode: no source documents — design entirely
+        # from the user_intent above. Mirrors ppt-master's standalone
+        # topic-research workflow but inline.
+        lines.append("# Source material")
+        lines.append(
+            "No source document was provided. Design this deck from the "
+            "User intent above. Use your general knowledge to expand the "
+            "topic into a coherent slide-by-slide outline. Do not refuse "
+            "or stall waiting for sources — produce a usable design_spec "
+            "and spec_lock based on the intent alone."
+        )
+        lines.append("")
     lines.append("# Output format")
     lines.append(
         "Produce two clearly-fenced sections in this exact order:\n"
