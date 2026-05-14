@@ -285,6 +285,43 @@ def _local_tag(elem: ET.Element) -> str:
     return elem.tag.split('}', 1)[-1] if isinstance(elem.tag, str) and '}' in elem.tag else str(elem.tag)
 
 
+def _autogen_top_level_group_ids(root: ET.Element) -> int:
+    """Backfill `id` on top-level <g> children that lack one.
+
+    The quality checker emits one warning per anonymous visual group at
+    the SVG root. Decks routinely accumulate a dozen warnings; the
+    Executor often omits ids on decorative groups even though the
+    Strategist's spec_lock animation config (when present) refers to
+    groups by id. Generating stable, position-derived ids
+    (``auto_grp_NN``) silences the warning and makes object-level
+    timing references resolvable.
+
+    Returns the number of ids generated.
+    """
+    used: set[str] = set()
+    for elem in root.iter():
+        elem_id = elem.get('id')
+        if elem_id:
+            used.add(elem_id)
+
+    count = 0
+    seq = 1
+    for idx, child in enumerate(list(root), start=1):
+        if _local_tag(child) != 'g':
+            continue
+        if child.get('id'):
+            continue
+        while True:
+            candidate = f'auto_grp_{seq:02d}'
+            seq += 1
+            if candidate not in used:
+                break
+        child.set('id', candidate)
+        used.add(candidate)
+        count += 1
+    return count
+
+
 def _collect_unsupported_visuals(root: ET.Element) -> list[str]:
     issues: list[str] = []
 
@@ -373,6 +410,15 @@ def convert_svg_to_slide_shapes(
     stripped = strip_orphan_uses(root)
     if verbose and stripped:
         print(f'  Replaced {stripped} unresolvable <use> element(s) with empty <g/> placeholders')
+
+    # Backfill missing `id` attributes on top-level <g> children. The
+    # quality checker emits one warning per anonymous top-level group;
+    # decks routinely accumulate a dozen of these. Silently auto-id
+    # the groups so the warning column stays clean and any object-level
+    # animation config can still reference them deterministically.
+    auto_ids = _autogen_top_level_group_ids(root)
+    if verbose and auto_ids:
+        print(f'  Auto-generated id on {auto_ids} top-level <g> element(s)')
 
     unsupported = _collect_unsupported_visuals(root)
     if unsupported:
