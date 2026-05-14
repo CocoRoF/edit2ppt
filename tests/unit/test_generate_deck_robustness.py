@@ -92,6 +92,58 @@ class TestPagePlanParsing:
         chunks = _split_page_plan(design_spec, spec_lock)
         assert len(chunks) >= 1  # falls back to spec_lock pages parsing
 
+    def test_reference_template_h4_slide_headings(self):
+        """The shipped design_spec_reference.md uses h4 (`#### Slide 01 - Cover`)
+        for page outlines, under `## IX. Content Outline` / `### Part 1`. The
+        parser must reach that depth or the executor never runs."""
+        spec = (
+            "## IX. Content Outline\n"
+            "### Part 1: Intro\n"
+            "#### Slide 01 - Cover\n"
+            "- Title: 표지\n"
+            "#### Slide 02 - Overview\n"
+            "- Title: 개요\n"
+            "#### Slide 03 - Conclusion\n"
+            "- Title: 결론\n"
+        )
+        chunks = _split_page_plan(spec, "")
+        assert len(chunks) == 3
+        assert "표지" in chunks[0]
+        assert "개요" in chunks[1]
+        assert "결론" in chunks[2]
+
+    def test_h5_h6_headings_still_caught(self):
+        """Strategist occasionally nests page outlines one level deeper."""
+        spec = "##### Slide 1\na\n###### Slide 2\nb"
+        chunks = _split_page_plan(spec, "")
+        assert len(chunks) == 2
+
+    def test_yaml_fallback_pages_list(self):
+        """No headings in design_spec; spec_lock has a `pages:` YAML list
+        with structured dict entries. YAML parser is the robust path."""
+        design_spec = "freeform text without page headings"
+        spec_lock = (
+            "lang: ko-KR\n"
+            "pages:\n"
+            "  - title: 표지\n"
+            "    layout: cover\n"
+            "  - title: 본문\n"
+            "    layout: split\n"
+            "  - title: 결론\n"
+            "    layout: closing\n"
+        )
+        chunks = _split_page_plan(design_spec, spec_lock)
+        assert len(chunks) == 3
+        # Dict entries are rendered as YAML so the executor can still read them.
+        assert "표지" in chunks[0]
+        assert "layout" in chunks[0]
+
+    def test_yaml_fallback_accepts_slides_synonym(self):
+        """When the Strategist names the list `slides` instead of `pages`."""
+        spec_lock = "slides:\n  - one\n  - two\n  - three\n"
+        chunks = _split_page_plan("", spec_lock)
+        assert chunks == ["one", "two", "three"]
+
 
 # ---------------------------------------------------------------------------
 # execute_batch partial-result preservation
