@@ -612,6 +612,12 @@ _PAGE_HEADING_PATTERNS = [
     r"^#{1,6}\s+(?:Page|Slide|페이지|슬라이드|ページ|スライド)\s+\d+[\s\-:—:]",
     # Numbered heading without a keyword: `## 1.`, `## 1)`, `## 1 - Title`
     r"^#{1,6}\s+\d+[\.\)\-]\s",
+    # **Bold P-id wrapper** — when chapters live in markdown headings the
+    # Strategist tends to drop pages to bold-only markers inside each chapter:
+    #   `**P01 — 표지 (anchor)**`, `**P10 — Closing**`. Anchored to line start.
+    r"^\*\*\s*P\d{1,3}\b",
+    # Bare line-start P-id with a separator — non-bold variant of the above.
+    r"^P\d{1,3}\s*[—\-:.]",
 ]
 _PAGE_HEADING_RE = re.compile(
     "|".join(f"(?:{p})" for p in _PAGE_HEADING_PATTERNS),
@@ -775,13 +781,33 @@ def _all_markdown_headings(text: str) -> list[str]:
     ]
 
 
-def _pages_from_spec_lock_yaml(spec_lock: str) -> list[str]:
-    """Locate a page-list-shaped collection inside spec_lock and return one
-    string summary per entry.
+_PAGE_COLLECTION_KEYS = (
+    "pages",
+    "page_rhythm",
+    "page_layouts",
+    "page_charts",
+    "outline",
+    "slides",
+)
 
-    Accepts any of these top-level keys (and a few synonyms the Strategist
-    sometimes invents): `pages`, `page_rhythm`, `page_layouts`, `outline`,
-    `slides`. The first key whose value is a non-empty list is taken.
+
+def _pages_from_spec_lock_yaml(spec_lock: str) -> list[str]:
+    """Locate a page-shaped collection inside spec_lock and return one
+    summary per entry.
+
+    Two collection shapes are accepted:
+
+    * List form (Appendix-K style): top-level key with a list of entries.
+      Each entry becomes one summary.
+    * Map form (reference body style): top-level key with a dict whose
+      keys are P-ids (``P01``, ``P02`` …). Each entry becomes one summary
+      keyed by P-id. When the same P-id appears under multiple keys
+      (``page_rhythm`` + ``page_layouts`` …), they are merged.
+
+    First key with a usable value wins for the list shape. For the map
+    shape we union across all matching keys so the executor receives
+    every attribute the Strategist recorded per page (rhythm tag, layout,
+    chart template, …).
     """
     if not spec_lock.strip():
         return []
@@ -795,11 +821,50 @@ def _pages_from_spec_lock_yaml(spec_lock: str) -> list[str]:
         return []
     if not isinstance(doc, dict):
         return []
-    for key in ("pages", "page_rhythm", "page_layouts", "outline", "slides"):
+
+    # List form — first key wins.
+    for key in _PAGE_COLLECTION_KEYS:
         value = doc.get(key)
         if isinstance(value, list) and value:
             return [_yaml_entry_to_summary(item) for item in value if item is not None]
-    return []
+
+    # Map form — union across every matching key, preserve P-id order.
+    merged: dict[str, list[str]] = {}
+    order: list[str] = []
+    for key in _PAGE_COLLECTION_KEYS:
+        value = doc.get(key)
+        if not isinstance(value, dict) or not value:
+            continue
+        for pid, attr in value.items():
+            pid_str = str(pid).strip()
+            if not pid_str:
+                continue
+            snippet = _yaml_attr_snippet(key, attr)
+            if pid_str not in merged:
+                merged[pid_str] = []
+                order.append(pid_str)
+            merged[pid_str].append(snippet)
+
+    if not order:
+        return []
+    return [
+        f"# {pid}\n" + "\n".join(f"- {snip}" for snip in merged[pid])
+        for pid in order
+    ]
+
+
+def _yaml_attr_snippet(section: str, value: object) -> str:
+    """Render one P-id's attribute (rhythm tag, layout name, etc.) as a
+    short bullet line for the merged page summary."""
+    if value is None:
+        return section
+    if isinstance(value, (str, int, float, bool)):
+        return f"{section}: {value}"
+    import yaml
+    try:
+        return f"{section}: " + yaml.safe_dump(value, allow_unicode=True, sort_keys=False).strip()
+    except yaml.YAMLError:
+        return f"{section}: {value!r}"
 
 
 def _yaml_entry_to_summary(item: object) -> str:
