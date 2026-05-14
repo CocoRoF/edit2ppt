@@ -363,6 +363,17 @@ def convert_svg_to_slide_shapes(
     if verbose and expanded_href:
         print(f'  Expanded {expanded_href} standard <use href="#..."/> reference(s)')
 
+    # Final safety net: replace any <use> the expanders couldn't resolve
+    # (unknown data-icon name, dangling href, malformed reference) with an
+    # empty <g/>. The icon visually disappears but the slide builds — a
+    # missing icon is dramatically better than the entire deck failing,
+    # which is what happened in production when a single unresolved <use>
+    # propagated all the way up to the inline executor.
+    from .use_safety_net import strip_orphan_uses
+    stripped = strip_orphan_uses(root)
+    if verbose and stripped:
+        print(f'  Replaced {stripped} unresolvable <use> element(s) with empty <g/> placeholders')
+
     unsupported = _collect_unsupported_visuals(root)
     if unsupported:
         preview = '; '.join(unsupported[:8])

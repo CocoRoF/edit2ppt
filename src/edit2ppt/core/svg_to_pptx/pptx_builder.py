@@ -226,6 +226,65 @@ def _build_sequence_targets(
     return seq_targets, mixed_count
 
 
+def _placeholder_slide_xml(
+    slide_num: int,
+    svg_name: str,
+    error: BaseException,
+) -> tuple[str, dict, list, list]:
+    """Return a minimal valid slide for the per-slide fallback path.
+
+    Used when an individual SVG cannot be converted to DrawingML. The
+    placeholder carries a short Korean+English message so the operator
+    can see which slide degraded and why, without losing the rest of
+    the deck. Returns the same 4-tuple shape as
+    ``convert_svg_to_slide_shapes`` so the caller can drop it in
+    verbatim.
+    """
+    err_text = str(error).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    err_text = err_text[:200]  # tight cap so OOXML stays valid
+
+    placeholder_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        '<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"\n'
+        '       xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"\n'
+        '       xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">\n'
+        '<p:cSld>\n'
+        '<p:spTree>\n'
+        '<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>\n'
+        '<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/>'
+        '<a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>\n'
+        '<p:sp>\n'
+        f'  <p:nvSpPr><p:cNvPr id="2" name="placeholder_{slide_num}"/>'
+        '<p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>\n'
+        '  <p:spPr><a:xfrm><a:off x="914400" y="2286000"/><a:ext cx="10363200" cy="2286000"/></a:xfrm>'
+        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>\n'
+        '  <p:txBody>\n'
+        '    <a:bodyPr wrap="square" anchor="ctr"/>\n'
+        '    <a:lstStyle/>\n'
+        '    <a:p><a:pPr algn="ctr"/>'
+        '<a:r><a:rPr lang="ko-KR" sz="2800" b="1">'
+        '<a:latin typeface="Malgun Gothic"/><a:ea typeface="Malgun Gothic"/></a:rPr>'
+        f'<a:t>슬라이드 {slide_num} 렌더링 실패</a:t></a:r></a:p>\n'
+        '    <a:p><a:pPr algn="ctr"/>'
+        '<a:r><a:rPr lang="en-US" sz="1400">'
+        '<a:latin typeface="Malgun Gothic"/><a:ea typeface="Malgun Gothic"/></a:rPr>'
+        f'<a:t>Slide {slide_num} could not be rendered.</a:t></a:r></a:p>\n'
+        '    <a:p><a:pPr algn="ctr"/>'
+        '<a:r><a:rPr lang="en-US" sz="900" i="0">'
+        '<a:latin typeface="Consolas"/></a:rPr>'
+        f'<a:t>{err_text}</a:t></a:r></a:p>\n'
+        '  </p:txBody>\n'
+        '</p:sp>\n'
+        '</p:spTree>\n'
+        '</p:cSld>\n'
+        '<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>\n'
+        '</p:sld>'
+    )
+    # No media, no rel entries, no animation targets — the placeholder
+    # is self-contained text only.
+    return placeholder_xml, {}, [], []
+
+
 def create_pptx_with_native_svg(
     svg_files: list[Path],
     output_path: Path,
@@ -377,11 +436,27 @@ def create_pptx_with_native_svg(
                 # ---- Native shapes mode ----
                 if use_native_shapes:
                     slide_cfg = _slide_config(animation_config, svg_path.stem)
-                    slide_xml, media_files_dict, rel_entries, anim_targets = (
-                        convert_svg_to_slide_shapes(
-                            svg_path, slide_num=slide_num, verbose=verbose,
+                    try:
+                        slide_xml, media_files_dict, rel_entries, anim_targets = (
+                            convert_svg_to_slide_shapes(
+                                svg_path, slide_num=slide_num, verbose=verbose,
+                            )
                         )
-                    )
+                    except Exception as conv_err:
+                        # A single broken SVG must not poison the whole
+                        # deck. Replace this slide with a minimal
+                        # placeholder ("page N — render failed") so the
+                        # rest of the build proceeds. Operators get a
+                        # downloadable PPTX with N-1 good slides plus a
+                        # marker where the bad one would have been.
+                        if verbose:
+                            print(
+                                f'  [{i}/{len(svg_files)}] {svg_path.name} — '
+                                f'render failed ({conv_err}); inserting placeholder'
+                            )
+                        slide_xml, media_files_dict, rel_entries, anim_targets = (
+                            _placeholder_slide_xml(slide_num, svg_path.name, conv_err)
+                        )
                     slide_transition, slide_transition_duration, slide_auto_advance = (
                         _slide_transition_settings(
                             slide_cfg,
