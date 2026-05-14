@@ -203,6 +203,98 @@ class TestPagePlanParsing:
         chunks = _split_page_plan("just prose", "lang: ko-KR\n", raw_output="")
         assert chunks == []
 
+    def test_bold_p_id_pages_inside_chapter_headings(self):
+        """Real production output: Strategist used `### Chapter N` for
+        section breaks and `**P06 — 두 가지 길 (anchor)**` for the page
+        markers themselves. The page regex must catch the bold P-ids."""
+        spec = (
+            "## IX. 콘텐츠 아웃라인\n\n"
+            "### Chapter 1 — 도입\n\n"
+            "**P01 — 표지 (anchor)**\n"
+            "- 레이아웃: 풀블리드\n"
+            "- 메인 메시지: 개발자의 종말\n\n"
+            "**P02 — 도입 (breathing)**\n"
+            "- 레이아웃: 풀블리드 인용\n\n"
+            "### Chapter 2 — 현실 진단\n\n"
+            "**P03 — 통계 (dense)**\n"
+            "- 레이아웃: KPI 카드 4x1\n"
+            "- KPI 1: 55%\n\n"
+            "**P04 — 비교 (dense)**\n"
+            "- 레이아웃: 좌우 분할\n"
+        )
+        chunks = _split_page_plan(spec, "")
+        assert len(chunks) == 4
+        assert "표지" in chunks[0]
+        assert "도입" in chunks[1]
+        assert "KPI" in chunks[2]
+        assert "비교" in chunks[3]
+
+    def test_yaml_spec_lock_page_rhythm_as_dict(self):
+        """Real production spec_lock: page_rhythm is a YAML map
+        (`P01: anchor`, `P02: breathing`, …), not a list. Each entry
+        must become one page summary in declaration order."""
+        spec_lock = (
+            "project:\n"
+            "  pages_total: 4\n"
+            "page_rhythm:\n"
+            "  P01: anchor\n"
+            "  P02: breathing\n"
+            "  P03: dense\n"
+            "  P04: dense\n"
+        )
+        chunks = _split_page_plan("", spec_lock)
+        assert len(chunks) == 4
+        assert chunks[0].startswith("# P01")
+        assert "anchor" in chunks[0]
+        assert "page_rhythm: anchor" in chunks[0]
+
+    def test_yaml_spec_lock_unions_multiple_dict_sections(self):
+        """page_rhythm + page_layouts both map P-id → tag. The merged
+        result lists every P-id once with every section's attribute."""
+        spec_lock = (
+            "page_rhythm:\n"
+            "  P01: anchor\n"
+            "  P02: dense\n"
+            "page_layouts:\n"
+            "  P01: 01_cover\n"
+            "  P02: 03a_content\n"
+            "page_charts:\n"
+            "  P02: bar_chart\n"
+        )
+        chunks = _split_page_plan("", spec_lock)
+        assert len(chunks) == 2
+        assert "page_rhythm: anchor" in chunks[0]
+        assert "page_layouts: 01_cover" in chunks[0]
+        assert "page_rhythm: dense" in chunks[1]
+        assert "page_charts: bar_chart" in chunks[1]
+
+    def test_real_world_production_design_spec_snippet(self):
+        """Regression guard: a near-verbatim slice of the failing prod
+        case (chapter headings + bold P-id pages + Korean) must parse."""
+        spec = (
+            "## IX. 콘텐츠 아웃라인\n\n"
+            "### Chapter 3 — 갈림길\n\n"
+            "**P06 — 두 가지 길 (anchor)**\n"
+            "- 레이아웃: 좌우 분할 5:5\n"
+            "- 좌측 (Alert Red): `활용하지 못한 자`\n"
+            "- 우측 (Neon Lime): `활용하는 자`\n\n"
+            "**P07 — 결정적 질문 (breathing)**\n"
+            "- 레이아웃: 풀블리드 인용\n\n"
+            "### Chapter 4 — 행동\n\n"
+            "**P08 — 무엇을 잃지 말아야 하는가 (dense)**\n"
+            "- 레이아웃: 센터 라디에이팅\n\n"
+            "**P09 — 지금부터 해야 할 일 (dense)**\n"
+            "- 레이아웃: 수평 타임라인\n\n"
+            "**P10 — 마지막 메시지 (breathing)**\n"
+            "- 레이아웃: 풀블리드\n"
+        )
+        chunks = _split_page_plan(spec, "")
+        assert len(chunks) == 5
+        # First chunk holds P06; last chunk holds P10.
+        assert "P06" in chunks[0]
+        assert "두 가지 길" in chunks[0]
+        assert "P10" in chunks[-1]
+
 
 # ---------------------------------------------------------------------------
 # execute_batch partial-result preservation
