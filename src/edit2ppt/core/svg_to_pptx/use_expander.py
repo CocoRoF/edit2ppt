@@ -58,7 +58,15 @@ def _build_replacement_g(
         attrs['icon'], icons_dir,
     )
     if not icon_path.exists():
-        return None
+        # The Strategist sometimes invents icon names that don't quite
+        # match the bundled library (`trending-up` vs `arrow-trend-up`,
+        # `brain` vs `brain-2`, etc.). Before giving up, try the closest
+        # filename in the resolved library directory — keeps the deck
+        # visually intact instead of dropping the glyph.
+        substitute = _fuzzy_resolve(attrs['icon'], icons_dir)
+        if substitute is None:
+            return None
+        icon_path = substitute
 
     color = attrs.get('fill', '#000000')
     elements, style, base_size = embed_icons_mod.extract_paths_from_icon(
@@ -81,6 +89,70 @@ def _build_replacement_g(
         local = child.tag.split('}')[-1] if '}' in child.tag else child.tag
         if local == 'g':
             return child
+    return None
+
+
+def _fuzzy_resolve(icon_name: str, icons_dir: Path) -> Path | None:
+    """Best-effort match for a Strategist-invented icon name.
+
+    `icon_name` is in `<library>/<name>` form (e.g. ``chunk-filled/trending-up``).
+    We look at the actual files in ``icons_dir/<library>/`` and pick the
+    closest by edit distance, biased toward substring matches so common
+    synonyms resolve naturally:
+      ``trending-up`` → ``arrow-trend-up`` (substring of `-trend-up`)
+      ``brain``       → ``brain-2``         (substring)
+      ``chevron``     → ``chevron-right``   (substring)
+
+    Returns the matched Path, or None if the library directory is
+    missing or no file is reasonably close.
+    """
+    import difflib
+
+    if '/' not in icon_name:
+        return None
+    library, name = icon_name.split('/', 1)
+    lib_dir = icons_dir / library
+    if not lib_dir.is_dir():
+        return None
+
+    name_lower = name.lower()
+    if len(name_lower) < 3:
+        return None
+
+    # Score each candidate by the length of the longest contiguous match
+    # with the requested name. We require the match to cover at least
+    # half of the shorter string (and at least 3 chars) so accidental
+    # short-substring hits like `e.svg` inside `trending-up` don't win.
+    candidates: list[tuple[int, Path]] = []
+    for path in lib_dir.iterdir():
+        if path.suffix != '.svg':
+            continue
+        stem = path.stem.lower()
+        if len(stem) < 3:
+            continue
+        m = difflib.SequenceMatcher(None, name_lower, stem).find_longest_match(
+            0, len(name_lower), 0, len(stem)
+        )
+        if m.size < 3:
+            continue
+        if m.size < max(3, min(len(name_lower), len(stem)) // 2):
+            continue
+        candidates.append((m.size, path))
+
+    if candidates:
+        # Prefer the longest contiguous match; on ties take the stem with
+        # the length closest to the original (so `target` beats
+        # `target-arrow` when the request was just `target`).
+        candidates.sort(
+            key=lambda pair: (-pair[0], abs(len(pair[1].stem) - len(name_lower)))
+        )
+        return candidates[0][1]
+
+    # Fall back to difflib similarity ratio across the whole library.
+    all_stems = [p.stem for p in lib_dir.iterdir() if p.suffix == '.svg']
+    matches = difflib.get_close_matches(name_lower, all_stems, n=1, cutoff=0.7)
+    if matches:
+        return lib_dir / f'{matches[0]}.svg'
     return None
 
 
