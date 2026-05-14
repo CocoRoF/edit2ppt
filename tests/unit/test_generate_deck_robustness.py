@@ -144,6 +144,65 @@ class TestPagePlanParsing:
         chunks = _split_page_plan("", spec_lock)
         assert chunks == ["one", "two", "three"]
 
+    def test_markdown_spec_lock_page_rhythm_rows(self):
+        """The shipped spec_lock reference uses markdown (`## page_rhythm`
+        with `- P01: anchor` data lines) instead of pure YAML. The page-
+        rhythm row count must drive the page list."""
+        spec_lock = (
+            "## canvas\n- viewBox: 0 0 1280 720\n\n"
+            "## page_rhythm\n"
+            "- P01: anchor\n"
+            "- P02: dense\n"
+            "- P03: breathing\n"
+            "- P04: dense\n"
+        )
+        chunks = _split_page_plan("freeform with no headings", spec_lock)
+        assert len(chunks) == 4
+        # P01 carries the rhythm tag so the executor sees the structure.
+        assert "anchor" in chunks[0]
+        assert chunks[0].startswith("# P01")
+
+    def test_markdown_spec_lock_dedupes_across_sections(self):
+        """`## page_rhythm` + `## page_layouts` reference the same P-ids;
+        the parser merges rather than double-counting them."""
+        spec_lock = (
+            "## page_rhythm\n"
+            "- P01: anchor\n"
+            "- P02: dense\n"
+            "## page_layouts\n"
+            "- P01: 01_cover\n"
+            "- P02: 03a_content\n"
+        )
+        chunks = _split_page_plan("", spec_lock)
+        assert len(chunks) == 2  # not 4
+        assert "anchor" in chunks[0]
+        assert "01_cover" in chunks[0]
+
+    def test_raw_output_fallback_when_design_spec_truncated(self):
+        """When fence extraction truncated design_spec mid-document and
+        §IX Content Outline only exists in raw_output, scan that as a
+        fallback so the executor still gets pages."""
+        truncated_spec = "## I. Project Info\n## II. Canvas\n"
+        raw_output = (
+            "```design_spec\n"
+            + truncated_spec
+            + "## V. Layout\n```svg\n<svg/>\n```\n"  # nested fence broke extraction
+            + "## IX. Content Outline\n"
+            + "#### Slide 01 - Cover\n- Title: 표지\n"
+            + "#### Slide 02 - Body\n- Title: 본문\n"
+            + "```\n"
+        )
+        chunks = _split_page_plan(truncated_spec, "", raw_output=raw_output)
+        assert len(chunks) == 2
+        assert "표지" in chunks[0]
+        assert "본문" in chunks[1]
+
+    def test_returns_empty_when_truly_nothing_parseable(self):
+        """Diagnostic path: returning [] is the signal for the caller to
+        log and raise — must NOT crash inside the parser itself."""
+        chunks = _split_page_plan("just prose", "lang: ko-KR\n", raw_output="")
+        assert chunks == []
+
 
 # ---------------------------------------------------------------------------
 # execute_batch partial-result preservation
