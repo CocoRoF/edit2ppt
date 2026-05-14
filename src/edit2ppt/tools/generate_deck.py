@@ -217,20 +217,26 @@ async def generate_deck(
     cost = _merge_cost(cost, strat.cost)
     warnings.extend(strat.warnings)
 
-    page_summaries = _split_page_plan(strat.design_spec, strat.spec_lock)
+    page_summaries = _split_page_plan(
+        strat.design_spec,
+        strat.spec_lock,
+        raw_output=strat.raw_output,
+    )
     if not page_summaries:
         # Surface enough of the Strategist response to actually diagnose
-        # the failure — without this the operator has no signal beyond
-        # "executor never ran". Trim to ~3 KB so a runaway response
-        # doesn't flood the logs.
-        raw_excerpt = (strat.raw_output or "")[:3000]
+        # the failure. Cap each section at ~4 KB to keep logs readable.
+        headings = _all_markdown_headings(strat.design_spec)
         logger.error(
             "Strategist output did not yield any page summaries.\n"
             "design_spec length=%d, spec_lock length=%d.\n"
-            "raw_output[:3000]=\n%s",
+            "markdown headings in design_spec (truncated to first 40):\n%s\n"
+            "spec_lock (first 2 KB):\n%s\n"
+            "design_spec (last 2 KB):\n%s",
             len(strat.design_spec or ""),
             len(strat.spec_lock or ""),
-            raw_excerpt,
+            "\n".join(headings[:40]) or "<none>",
+            (strat.spec_lock or "")[:2000],
+            (strat.design_spec or "")[-2000:],
         )
         raise RuntimeError(
             "Strategist output did not yield any page summaries; "
@@ -613,33 +619,69 @@ _PAGE_HEADING_RE = re.compile(
 )
 
 
-def _split_page_plan(design_spec: str, spec_lock: str) -> list[str]:
+def _split_page_plan(
+    design_spec: str,
+    spec_lock: str,
+    *,
+    raw_output: str | None = None,
+) -> list[str]:
     """Extract per-page content summaries from the Strategist's output.
 
-    Heading patterns supported (case-insensitive, line-start, h1/h2/h3):
+    Heading patterns supported (case-insensitive, line-start, h1-h6):
         Page / Slide / 페이지 / 슬라이드 / ページ / スライド  + index
         Page-1 / Slide#1 / Slide: 1 / Page 1: Title / 페이지 1 — 표지
         Numbered headings without keyword (`## 1.`, `## 1)`, `## 1 - Title`)
 
-    If none match in `design_spec`, fall back to splitting `spec_lock`'s
-    `pages:` block. As a last resort, treat the entire design_spec as a
-    single page (the Executor still runs, the deck just has 1 slide).
-    """
-    if _PAGE_HEADING_RE.search(design_spec):
-        positions = [m.start() for m in _PAGE_HEADING_RE.finditer(design_spec)]
-        positions.append(len(design_spec))
-        return [design_spec[positions[i] : positions[i + 1]].strip() for i in range(len(positions) - 1)]
+    Resolution order — each layer covers a different Strategist quirk:
+      1. Heading scan on `design_spec`.
+      2. YAML parse of `spec_lock` looking for `pages` / `page_rhythm` /
+         `page_layouts` / `outline` / `slides` collections.
+      3. Markdown-style `## page_rhythm` / `## page_layouts` sections
+         inside `spec_lock` (the format the shipped spec_lock_reference
+         uses — markdown headings, not YAML keys).
+      4. Heading scan on `raw_output` (catches the case where fence
+         extraction truncated design_spec mid-document).
+      5. Legacy YAML-ish line-walker over a `pages:` block.
 
-    # Fallback 1: parse spec_lock as actual YAML and harvest any top-level
-    # collection that walks like a page list. Robust against indentation
-    # / wrapping quirks that broke the older line-walker.
+    Returns [] only if every layer comes up empty — the caller then
+    logs a diagnostic dump and raises.
+    """
+    # Layer 1: page headings inside design_spec.
+    matches = list(_PAGE_HEADING_RE.finditer(design_spec))
+    if matches:
+        positions = [m.start() for m in matches] + [len(design_spec)]
+        return [
+            design_spec[positions[i] : positions[i + 1]].strip()
+            for i in range(len(positions) - 1)
+        ]
+
+    # Layer 2: YAML-parsed spec_lock with a top-level list collection.
     yaml_chunks = _pages_from_spec_lock_yaml(spec_lock)
     if yaml_chunks:
         return yaml_chunks
 
-    # Fallback 2: legacy line-walker over spec_lock's `pages:` block. Kept
-    # for spec_lock variants that aren't quite parseable YAML (e.g. when
-    # the Strategist wraps inline maps oddly).
+    # Layer 3: markdown-style spec_lock — the shipped reference template
+    # uses `## page_rhythm` / `## page_layouts` markdown sections with
+    # `- P01: anchor` data lines. Count those to derive the page list.
+    md_chunks = _pages_from_spec_lock_markdown(spec_lock)
+    if md_chunks:
+        return md_chunks
+
+    # Layer 4: scan the entire raw_output. Triggers when an internal
+    # ``` truncated design_spec mid-document and §IX Content Outline
+    # spilled out into raw_output but not into our `design_spec` slice.
+    if raw_output:
+        raw_matches = list(_PAGE_HEADING_RE.finditer(raw_output))
+        if raw_matches:
+            positions = [m.start() for m in raw_matches] + [len(raw_output)]
+            return [
+                raw_output[positions[i] : positions[i + 1]].strip()
+                for i in range(len(positions) - 1)
+            ]
+
+    # Layer 5: legacy line-walker over spec_lock's `pages:` block —
+    # tolerates variants the YAML parser rejects (inline maps, weird
+    # indentation).
     chunks: list[str] = []
     in_pages = False
     current: list[str] = []
@@ -650,7 +692,6 @@ def _split_page_plan(design_spec: str, spec_lock: str) -> list[str]:
             continue
         if in_pages:
             if stripped and not stripped.startswith((" ", "\t", "-")):
-                # Left the pages block.
                 if current:
                     chunks.append("\n".join(current).strip())
                 break
@@ -663,6 +704,75 @@ def _split_page_plan(design_spec: str, spec_lock: str) -> list[str]:
     if current:
         chunks.append("\n".join(current).strip())
     return [c for c in chunks if c]
+
+
+# Matches `- P01: <anything>` data lines under a markdown `## page_rhythm`
+# / `## page_layouts` / `## page_charts` section in spec_lock.
+_SPEC_LOCK_PAGE_ROW_RE = re.compile(
+    r"^\s*-\s*P\d{1,3}\s*:",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+
+def _pages_from_spec_lock_markdown(spec_lock: str) -> list[str]:
+    """Read the markdown-shaped spec_lock used by the shipped reference
+    template, where pages are declared as `- P01: tag` rows under one
+    of several `## <section>` markdown headings.
+
+    Strategy: collect every `- P<NN>: ...` row across the document and
+    deduplicate by index. Each unique index becomes one page summary
+    carrying every row attribute that mentions it (rhythm tag, layout
+    name, chart template, etc.) so the executor still has structured
+    context to work from.
+    """
+    if not spec_lock.strip():
+        return []
+    if not _SPEC_LOCK_PAGE_ROW_RE.search(spec_lock):
+        return []
+
+    # Map: "P01" -> list of attribute snippets harvested from each section.
+    rows: dict[str, list[str]] = {}
+    order: list[str] = []
+    current_section = ""
+    for line in spec_lock.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("##"):
+            current_section = stripped.lstrip("# ").strip().lower()
+            continue
+        m = re.match(r"^\s*-\s*(P\d{1,3})\s*:\s*(.*)$", line, flags=re.IGNORECASE)
+        if not m:
+            continue
+        key = m.group(1).upper()
+        value = m.group(2).strip()
+        snippet = f"{current_section or 'page'}: {value}" if value else current_section or "page"
+        if key not in rows:
+            rows[key] = []
+            order.append(key)
+        rows[key].append(snippet)
+
+    if not order:
+        return []
+
+    return [
+        f"# {key}\n" + "\n".join(f"- {snip}" for snip in rows[key])
+        for key in order
+    ]
+
+
+def _all_markdown_headings(text: str) -> list[str]:
+    """Return every markdown heading line in *text* (h1-h6).
+
+    Used by the diagnostic logger so an operator looking at a parse
+    failure can immediately see what shape the Strategist actually
+    produced — no need to scroll through 10 KB of design_spec.
+    """
+    if not text:
+        return []
+    return [
+        line.strip()
+        for line in text.splitlines()
+        if re.match(r"^\s*#{1,6}\s+\S", line)
+    ]
 
 
 def _pages_from_spec_lock_yaml(spec_lock: str) -> list[str]:

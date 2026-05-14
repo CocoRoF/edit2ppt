@@ -160,15 +160,32 @@ def _build_user_message(req: StrategizeRequest) -> str:
     return "\n".join(lines)
 
 
+_DESIGN_SPEC_LABELS = ("design_spec", "design-spec")
+_SPEC_LOCK_LABELS = ("spec_lock", "spec-lock", "yaml")
+
+
 def _split_output(text: str, warnings: list[WarningEntry]) -> tuple[str, str]:
     """Pull the two fenced blocks out of the LLM response.
 
     The Strategist prompt asks for ```design_spec ... ``` and ```spec_lock ... ```
     fenced sections. We tolerate small label variations and fall back to the
     raw text if a block is missing (with a warning).
+
+    Robustness: the design_spec body legitimately contains its own fenced
+    code blocks (SVG samples, palette swatches, YAML examples). A naive
+    "first ``` after the opener" closer would truncate the block mid-way
+    and lose every later section — including §IX Content Outline, which
+    the page-plan parser needs. We instead pair openers with the **last**
+    fence before the next labeled opener (or EOF).
     """
-    design_spec = _extract_block(text, ("design_spec", "design-spec"))
-    spec_lock = _extract_block(text, ("spec_lock", "spec-lock", "yaml"))
+    pair = _extract_paired_blocks(text)
+    if pair is not None:
+        design_spec, spec_lock = pair
+        return design_spec.strip(), spec_lock.strip()
+
+    # Single-block degradation paths — try each label independently.
+    design_spec = _extract_block_single(text, _DESIGN_SPEC_LABELS)
+    spec_lock = _extract_block_single(text, _SPEC_LOCK_LABELS)
 
     if design_spec is None:
         warnings.append(
@@ -190,15 +207,66 @@ def _split_output(text: str, warnings: list[WarningEntry]) -> tuple[str, str]:
     return design_spec.strip(), spec_lock.strip()
 
 
-def _extract_block(text: str, labels: tuple[str, ...]) -> str | None:
-    """Find the first ```<label> ... ``` block whose label is in *labels*."""
+def _find_labeled_opener(text: str, labels: tuple[str, ...], start: int = 0) -> int | None:
+    """Return the index of the first ```<label> opener in *text*, or None."""
+    fence = "```"
+    pos = start
+    while True:
+        idx = text.find(fence, pos)
+        if idx == -1:
+            return None
+        header_end = text.find("\n", idx + len(fence))
+        if header_end == -1:
+            return None
+        label = text[idx + len(fence) : header_end].strip().lower()
+        if any(label == lbl or label.startswith(lbl) for lbl in labels):
+            return idx
+        pos = header_end + 1
+
+
+def _extract_paired_blocks(text: str) -> tuple[str, str] | None:
+    """Locate the design_spec + spec_lock openers in order and return both
+    bodies. Closing fences are the **last** ``` before each next opener
+    (or EOF for the trailing block), so nested code blocks inside the
+    design_spec don't truncate it.
+    """
+    design_open = _find_labeled_opener(text, _DESIGN_SPEC_LABELS, 0)
+    if design_open is None:
+        return None
+    design_header_end = text.find("\n", design_open + 3)
+    if design_header_end == -1:
+        return None
+
+    spec_open = _find_labeled_opener(text, _SPEC_LOCK_LABELS, design_header_end + 1)
+    if spec_open is None:
+        return None
+    spec_header_end = text.find("\n", spec_open + 3)
+    if spec_header_end == -1:
+        return None
+
+    # design_spec body ends at the LAST ``` before the spec_lock opener.
+    design_close = text.rfind("```", design_header_end + 1, spec_open)
+    design_body = text[design_header_end + 1 : design_close] if design_close != -1 else text[design_header_end + 1 : spec_open]
+
+    # spec_lock body ends at the LAST ``` before EOF, or runs to EOF if
+    # the model forgot the closing fence.
+    spec_close = text.rfind("```", spec_header_end + 1)
+    if spec_close == -1 or spec_close <= spec_header_end:
+        spec_body = text[spec_header_end + 1 :]
+    else:
+        spec_body = text[spec_header_end + 1 : spec_close]
+
+    return design_body, spec_body
+
+
+def _extract_block_single(text: str, labels: tuple[str, ...]) -> str | None:
+    """Single-block extractor — used only when paired extraction fails."""
     fence = "```"
     pos = 0
     while True:
         start = text.find(fence, pos)
         if start == -1:
             return None
-        # Read label up to newline.
         header_end = text.find("\n", start + len(fence))
         if header_end == -1:
             return None
@@ -209,6 +277,10 @@ def _extract_block(text: str, labels: tuple[str, ...]) -> str | None:
         if any(label == lbl or label.startswith(lbl) for lbl in labels):
             return text[header_end + 1 : end]
         pos = end + len(fence)
+
+
+# Legacy alias for callers that imported the old symbol.
+_extract_block = _extract_block_single
 
 
 def _cost_from_usage(usage: LLMUsage, duration_seconds: float) -> CostBreakdown:
