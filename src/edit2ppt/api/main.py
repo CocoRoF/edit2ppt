@@ -1,6 +1,7 @@
 """FastAPI application root.
 
-Wires the lifespan (DB init), routers, and bilingual error handlers.
+Wires the lifespan (auto-bootstrap on first boot), routers, and bilingual
+error handlers.
 
 Routes:
   GET  /health                       — liveness probe
@@ -11,6 +12,14 @@ Routes:
   GET  /v1/assets/{id}               — metadata
   GET  /v1/assets/{id}/download      — presigned GET URL (Korean filename safe)
   DELETE /v1/assets/{id}             — delete
+  POST /v1/jobs/generate-deck        — enqueue + (inline mode) kick off
+  GET  /v1/jobs/{id}                 — job status
+  GET  /v1/jobs/{id}/events          — SSE event stream
+  GET  /v1/raw/{key}                 — LocalFilesystemStorage download endpoint
+
+Lifespan also picks the queue backend:
+- `EDIT2PPT_REDIS_URL` set → arq pool (worker process polls Redis).
+- Otherwise → inline asyncio mode (`asyncio.create_task` per submitted job).
 
 See ppt-master-analysis/04-integration-plan.md for the layered architecture
 and ppt-master-analysis/05-roadmap.md for the milestone breakdown.
@@ -25,11 +34,13 @@ from fastapi import FastAPI
 
 from ..config import get_settings
 from ..i18n import default_catalog
+from ..mcp.http_transport import mount_mcp
+from ..services.bootstrap import bootstrap
 from .dependencies import Catalog, RequestLocale
 from .errors import install_error_handlers
-from ..mcp.http_transport import mount_mcp
 from .routes import assets as assets_routes
 from .routes import jobs as jobs_routes
+from .routes import raw as raw_routes
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +49,41 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     settings = get_settings()
     logger.info(
-        "edit2ppt starting",
-        extra={"environment": settings.environment, "default_lang": settings.default_lang},
+        "edit2ppt starting (env=%s, lang=%s, db=%s, storage=%s, queue=%s)",
+        settings.environment,
+        settings.default_lang,
+        "postgres" if settings.uses_postgres else "sqlite",
+        "s3" if settings.uses_s3_storage else "local-fs",
+        "arq" if settings.uses_redis_queue else "inline",
     )
+
+    # Auto-bootstrap: data dir, database schema, S3 bucket. Idempotent.
+    await bootstrap(settings)
+
     catalog = default_catalog()
     logger.info("loaded i18n locales: %s", catalog.supported_locales())
+
+    # Queue mode resolution. We materialize the arq pool when Redis is
+    # configured; otherwise jobs run inline via the route handler.
+    app.state.arq_pool = None
+    if settings.uses_redis_queue:
+        try:
+            from arq import create_pool
+
+            from ..services.jobs import arq_redis_settings
+
+            app.state.arq_pool = await create_pool(arq_redis_settings(settings))
+            logger.info("queue: arq pool ready (Redis at %s)", settings.redis_url)
+        except Exception as exc:
+            logger.warning(
+                "queue: arq pool failed (%s) — falling back to inline mode", exc
+            )
+            app.state.arq_pool = None
+
     yield
+
+    if app.state.arq_pool is not None:
+        await app.state.arq_pool.close()
     logger.info("edit2ppt shutting down")
 
 
@@ -60,10 +100,9 @@ app = FastAPI(
 install_error_handlers(app)
 app.include_router(assets_routes.router)
 app.include_router(jobs_routes.router)
+app.include_router(raw_routes.router)
 
 # MCP transports — mounted at /mcp (Streamable HTTP) and /mcp-sse (SSE).
-# Both expose the same FastMCP tool set; agents pick whichever matches their
-# spec version. See docs/mcp-clients.md for Claude Desktop / Cursor setup.
 mount_mcp(app)
 
 
@@ -74,8 +113,17 @@ mount_mcp(app)
 
 @app.get("/health", tags=["meta"])
 async def health() -> dict:
-    """Liveness probe. M3.5 extends with DB / Redis / Storage checks."""
-    return {"status": "ok"}
+    """Liveness + mode probe."""
+    settings = get_settings()
+    return {
+        "status": "ok",
+        "service": "edit2ppt",
+        "mode": {
+            "database": "postgres" if settings.uses_postgres else "sqlite",
+            "storage": "s3" if settings.uses_s3_storage else "local-fs",
+            "queue": "arq" if settings.uses_redis_queue else "inline",
+        },
+    }
 
 
 @app.get("/v1/locales", tags=["meta"])

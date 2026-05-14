@@ -19,15 +19,17 @@ import logging
 import uuid
 from typing import Annotated, AsyncIterator
 
-from fastapi import APIRouter, Header, HTTPException, Query, status
+from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from ...db.models import Job, JobKind, JobStatus
+from ...db.session import get_sessionmaker
 from ...services.jobs import (
     JobEventEnvelope,
     JobNotFound,
     enqueue_job,
+    get_default_bus,
     get_job,
     list_past_events,
 )
@@ -112,14 +114,18 @@ class JobResponse(BaseModel):
 )
 async def enqueue_generate_deck(
     body: GenerateDeckBody,
+    request: Request,
     tenant: CurrentTenant,
     session: DbSession,
     x_anthropic_api_key: Annotated[str | None, Header(alias="X-Anthropic-API-Key")] = None,
 ) -> JobResponse:
-    """Persist a queued generate_deck job; the worker picks it up next.
+    """Create a queued generate_deck job and trigger execution.
 
-    BYOK precedence: X-Anthropic-API-Key header > body field. At least one
-    must be set or the worker will fail on the first LLM call.
+    Queue mode is decided by lifespan:
+    - `arq` pool set on `request.app.state.arq_pool` (when EDIT2PPT_REDIS_URL
+      is configured) — push onto Redis; the worker process consumes.
+    - Otherwise — fire off `asyncio.create_task(_run_inline(job_id))` so
+      execution starts immediately in this process.
     """
     anthropic_key = x_anthropic_api_key or ""
     if not anthropic_key:
@@ -146,15 +152,65 @@ async def enqueue_generate_deck(
         # BYOK key — worker reads + nulls this out on completion (M6 encrypts).
         "anthropic_api_key": anthropic_key,
     }
+    arq_pool = getattr(request.app.state, "arq_pool", None)
     job = await enqueue_job(
         session=session,
         tenant=tenant,
         kind=JobKind.generate_deck,
         params=params,
         project_id=body.project_id,
-        arq_pool=None,  # M3.5: in-process queueing only; arq wiring lands in M6
+        arq_pool=arq_pool,
     )
+
+    # Inline mode: the request handler is the only place that knows the job
+    # has just been created, so kick off the worker right away. We can't
+    # use the request-scoped session for this (it commits/closes when the
+    # request returns) — _run_inline opens its own session.
+    if arq_pool is None:
+        asyncio.create_task(_run_inline(job.id))
+
     return JobResponse.from_row(job)
+
+
+async def _run_inline(job_id: uuid.UUID) -> None:
+    """Inline executor used when no Redis-backed arq worker is configured.
+
+    Mirrors workers.main.run_job but lives inside the FastAPI process. The
+    asyncio task is fire-and-forget: when something fails we record it on
+    the Job row and log, but we never raise back to the API caller (the
+    request has already returned 202 by the time we start).
+    """
+    from ...workers.executors.registry import EXECUTORS, ExecutionContext
+
+    sessionmaker = get_sessionmaker()
+    bus = get_default_bus()
+
+    async with sessionmaker() as session:
+        from sqlalchemy import select
+
+        job = (
+            await session.execute(select(Job).where(Job.id == job_id))
+        ).scalar_one_or_none()
+        if job is None:
+            logger.warning("inline runner: unknown job_id=%s", job_id)
+            return
+
+        executor = EXECUTORS.get(job.kind)
+        if executor is None:
+            logger.error("inline runner: no executor for kind=%s", job.kind)
+            job.status = JobStatus.failed
+            job.error_message = f"no executor for kind={job.kind.value}"
+            await session.commit()
+            return
+
+        ctx = ExecutionContext(session=session, bus=bus, job=job)
+        try:
+            await executor(ctx)
+        except Exception as exc:
+            logger.exception("inline runner: job %s failed", job_id)
+            job.status = JobStatus.failed
+            job.error_message = str(exc)
+            await session.commit()
 
 
 @router.get(
