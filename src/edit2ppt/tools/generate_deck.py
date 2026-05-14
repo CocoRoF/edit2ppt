@@ -612,15 +612,27 @@ _PAGE_HEADING_PATTERNS = [
     r"^#{1,6}\s+(?:Page|Slide|페이지|슬라이드|ページ|スライド)\s+\d+[\s\-:—:]",
     # Numbered heading without a keyword: `## 1.`, `## 1)`, `## 1 - Title`
     r"^#{1,6}\s+\d+[\.\)\-]\s",
-    # **Bold P-id wrapper** — when chapters live in markdown headings the
-    # Strategist tends to drop pages to bold-only markers inside each chapter:
-    #   `**P01 — 표지 (anchor)**`, `**P10 — Closing**`. Anchored to line start.
-    r"^\*\*\s*P\d{1,3}\b",
-    # Bare line-start P-id with a separator — non-bold variant of the above.
-    r"^P\d{1,3}\s*[—\-:.]",
+    # P-id with optional line-start marker. This single pattern subsumes
+    # every observed Strategist variant — the markdown heading wraps
+    # (`#### P01. 커버`), the bold wraps (`**P06 — 두 가지 길 (anchor)**`),
+    # the list-item wraps (`- P01: anchor`), and the bare line-start form
+    # (`P01 — Cover`). The optional prefix group means we don't have to
+    # add a new alternative every time the model picks a new wrapper.
+    r"^\s*(?:#{1,6}\s+|\*\*\s*|-\s+)?P\d{1,3}\b",
 ]
 _PAGE_HEADING_RE = re.compile(
     "|".join(f"(?:{p})" for p in _PAGE_HEADING_PATTERNS),
+    re.MULTILINE | re.IGNORECASE,
+)
+
+# Section markers for the Content Outline part of design_spec. When we can
+# locate this section the scan focuses there, which kills the false-positive
+# risk of a generic P-id pattern matching prose that happens to mention P01
+# in body text on the page before the actual outline starts.
+_OUTLINE_SECTION_RE = re.compile(
+    r"^#{1,6}\s+(?:"
+    r"(?:[IVX]+|9|IX)\s*[\.\):]\s*)?"
+    r"(?:Content Outline|콘텐츠 아웃라인|Outline|아웃라인|目次|アウトライン|大纲|大綱|페이지 아웃라인|페이지\s*개요|Pages?\s+Outline)",
     re.MULTILINE | re.IGNORECASE,
 )
 
@@ -639,9 +651,12 @@ def _split_page_plan(
         Numbered headings without keyword (`## 1.`, `## 1)`, `## 1 - Title`)
 
     Resolution order — each layer covers a different Strategist quirk:
-      1. Heading scan on `design_spec`.
+      1a. Locate `## IX. Content Outline` (or translated equivalent) and
+          scan ONLY inside it. Cuts down on false-positive P-id matches
+          in body prose that mentions page numbers.
+      1b. Heading scan over the entire `design_spec` (if 1a missed).
       2. YAML parse of `spec_lock` looking for `pages` / `page_rhythm` /
-         `page_layouts` / `outline` / `slides` collections.
+         `page_layouts` / `outline` / `slides` collections (list or map).
       3. Markdown-style `## page_rhythm` / `## page_layouts` sections
          inside `spec_lock` (the format the shipped spec_lock_reference
          uses — markdown headings, not YAML keys).
@@ -652,7 +667,21 @@ def _split_page_plan(
     Returns [] only if every layer comes up empty — the caller then
     logs a diagnostic dump and raises.
     """
-    # Layer 1: page headings inside design_spec.
+    # Layer 1a: outline-scoped scan. If we can locate the §IX section,
+    # confine page-heading matching there so prose elsewhere can't
+    # produce spurious page boundaries.
+    outline_match = _OUTLINE_SECTION_RE.search(design_spec)
+    if outline_match:
+        outline = design_spec[outline_match.end() :]
+        scoped = list(_PAGE_HEADING_RE.finditer(outline))
+        if scoped:
+            positions = [m.start() for m in scoped] + [len(outline)]
+            return [
+                outline[positions[i] : positions[i + 1]].strip()
+                for i in range(len(positions) - 1)
+            ]
+
+    # Layer 1b: page headings anywhere in design_spec.
     matches = list(_PAGE_HEADING_RE.finditer(design_spec))
     if matches:
         positions = [m.start() for m in matches] + [len(design_spec)]
