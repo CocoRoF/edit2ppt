@@ -32,7 +32,7 @@ import re
 import time
 
 logger = logging.getLogger(__name__)
-from typing import Awaitable, Callable, Literal
+from typing import Awaitable, Callable, Literal, Protocol
 
 from pydantic import Field
 
@@ -113,7 +113,7 @@ class GenerateDeckRequest(ToolRequest):
     # with an extra "the previous SVG had errors; emit something simpler"
     # hint appended to their page_summary. Pairs well with
     # fail_on_quality_error=True to attempt recovery before giving up.
-    retry_pages_on_quality_error: int = Field(default=0, ge=0, le=3)
+    retry_pages_on_quality_error: int = Field(default=2, ge=0, le=3)
 
     # BYOK keys for image acquisition. Map of provider env-var names to keys,
     # e.g. {"OPENAI_API_KEY": "sk-...", "PEXELS_API_KEY": "..."}. The keys are
@@ -341,10 +341,16 @@ async def generate_deck(
     # response — `fail_on_quality_error=True` is checked AFTER retries.
     retries_left = req.retry_pages_on_quality_error
     while retries_left > 0:
-        failing_pages = sorted(
-            {issue.page_index for issue in quality_resp.issues
-             if issue.severity == "error" and issue.page_index is not None}
-        )
+        # Group every error per page so the retry hint can name every
+        # rule the previous attempt broke. A generic "make it simpler"
+        # nudge isn't enough — the model has to know exactly which
+        # element type the converter would reject.
+        errors_by_page: dict[int, list[QualityIssueLike]] = {}
+        for issue in quality_resp.issues:
+            if issue.severity != "error" or issue.page_index is None:
+                continue
+            errors_by_page.setdefault(issue.page_index, []).append(issue)
+        failing_pages = sorted(errors_by_page.keys())
         if not failing_pages:
             break
 
@@ -364,9 +370,8 @@ async def generate_deck(
                 page_index=i,
                 page_summary=(
                     page_summaries[i]
-                    + "\n\n> Retry hint: the previous SVG failed quality checks. "
-                    "Emit a simpler version of this page — fewer shapes, no "
-                    "advanced filters, plain text + a single image if present."
+                    + "\n\n"
+                    + _build_retry_hint(errors_by_page[i])
                 ),
                 images=images_by_page.get(i, []),
                 style=req.style,
@@ -520,6 +525,80 @@ async def generate_deck(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+# Lightweight Protocol so the retry-hint builder doesn't need to import
+# `quality.QualityIssue` for type purposes only.
+class QualityIssueLike(Protocol):
+    code: str
+    message: str
+    severity: str
+
+
+# Targeted hints by issue code. The dispatcher below picks the matching
+# strings and assembles a per-page retry directive; when several codes
+# fire on the same page, every applicable rule is enumerated so the
+# model sees the full picture in one shot.
+_RETRY_HINTS: dict[str, str] = {
+    "forbidden_use_data_icon": (
+        "Do NOT emit `<use data-icon=\"...\"/>`. Replace each icon with its "
+        "primitive shapes (`<path>` / `<circle>` / `<rect>`). The Executor "
+        "must output self-contained SVG — there is no icon-expansion pass."
+    ),
+    "forbidden_use_href": (
+        "Do NOT emit `<use href=\"#...\"/>` or `<use xlink:href=\"#...\"/>`. "
+        "Inline the referenced shape directly. The converter does not "
+        "follow `<use>` references."
+    ),
+    "forbidden_use_bare": (
+        "Remove the `<use>` element entirely or replace it with the "
+        "primitives it was supposed to clone."
+    ),
+    "forbidden_foreign_object": (
+        "Do NOT use `<foreignObject>`. Wrap multi-line text in `<text>` + "
+        "multiple `<tspan>` elements (each `<tspan>` carries its own x/y)."
+    ),
+    "forbidden_script": (
+        "Do NOT include `<script>` or event-handler attributes. SVG must "
+        "be static."
+    ),
+}
+
+
+def _build_retry_hint(errors: list[QualityIssueLike]) -> str:
+    """Compose a precise correction directive for one page's retry call.
+
+    The hint enumerates every distinct rule violated, in stable order,
+    plus a fallback "simplify if you can't comply" footer so the model
+    always has a way forward. Generic feedback is the last resort —
+    every targeted error gets its own actionable line.
+    """
+    if not errors:
+        return ""
+    codes_seen: list[str] = []
+    for err in errors:
+        if err.code in _RETRY_HINTS and err.code not in codes_seen:
+            codes_seen.append(err.code)
+
+    lines = [
+        "> Retry hint: the previous SVG failed strict converter-parity "
+        "validation. Re-emit this page following EVERY rule below:",
+    ]
+    if codes_seen:
+        for code in codes_seen:
+            lines.append(f"> - {_RETRY_HINTS[code]}")
+    # Generic context — useful when the failure was from the legacy
+    # quality checker (no machine-readable code).
+    other = [e for e in errors if e.code not in _RETRY_HINTS]
+    if other:
+        lines.append("> Additional quality errors to fix:")
+        for err in other[:6]:  # cap; the rest is repetitive
+            lines.append(f"> - {err.message}")
+    lines.append(
+        "> When in doubt, prefer simpler output: fewer shapes, plain text + "
+        "primitives, no `<use>` / `<foreignObject>` / `<script>` ever."
+    )
+    return "\n".join(lines)
+
 
 def _run_quality_check(
     page_results: dict[int, "ExecutePageResponse"],
