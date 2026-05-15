@@ -533,3 +533,72 @@ Korean decks:
   for dramatic delivery.
 - Length budget: ~120–180 Hangul syllables per slide for a 60-second
   delivery; halve it for a 30-second deck.
+
+---
+
+## Z. Self-check before emitting the SVG
+
+Before emitting the ```svg``` block, run through this checklist
+verbatim. If any check fails, FIX the SVG and re-validate. The
+downstream pipeline mutates the SVG only for what it can verify
+deterministically; everything that depends on intent (alignment,
+hierarchy, content fit) must be right when you emit it.
+
+### Z.1 Layout brief alignment (when a brief is in the user message)
+
+- Every `<text>` whose role matches a brief zone sits inside that
+  zone. Title text inside the `title` zone. Page number text inside
+  `page_number` zone. Footer citation inside `footer` zone.
+- Page-number text uses the brief's `page_number` zone exactly. Do
+  not invent a narrower box for "NN / MM" — the brief sized it
+  generously on purpose.
+- Nothing extends past `safe_area`. If a hero element needs to
+  break out of `safe_area`, it must be a full-bleed background
+  layer (`<rect>` or `<image>`), not a `<text>` or a content shape.
+
+### Z.2 Coordinate hygiene
+
+- `viewBox="0 0 1280 720"` (or another 16:9 dimension; the pipeline
+  normalises). All x/y/w/h values are integers in pixel units.
+- No element's `x + width > 1280` or `y + height > 720`. Background
+  layers may equal the canvas exactly; content may not exceed it.
+- No two visible `<text>` boxes overlap. If your hero number is at
+  (60, 240, 400, 320), the caption goes at y ≥ 560 (below the hero's
+  bottom), not at y = 470 (inside it).
+
+### Z.3 Font size discipline
+
+- Every `font-size` is in the 12-180 px band. Below 12 px the
+  pipeline will floor it to 12 (annotation labels survive
+  projection); above 180 px the pipeline caps it (otherwise the
+  glyph occupies half the canvas). Stay in the band to keep your
+  intent visible.
+- `font-family` is a CSS stack ending in a Windows-installed family
+  (`"Malgun Gothic"`, `Arial`, `Consolas`). Never put a weight
+  inside the family name (`Pretendard 700` is invalid CSS — write
+  `font-family="Pretendard, Malgun Gothic, sans-serif" font-weight="700"`).
+
+### Z.4 SVG content discipline
+
+- No `<use>` elements except `<use data-icon="...">` referencing an
+  icon name from `spec_lock.icons.inventory`. The pipeline expands
+  data-icons; standard `<use href="#id"/>` references are stripped.
+- No `<foreignObject>`, `<script>`, `<animate*>`, `<style>` blocks.
+  All styling is inline attributes.
+- No `rgb(...)` / `rgba(...)` colors — emit `#RRGGBB`. Use
+  `fill-opacity` / `opacity` attributes for transparency.
+
+### Z.5 Hierarchy
+
+- Slide has exactly ONE primary title. If you have a chapter label
+  AND a title, the chapter label sits in the chapter_label zone (top
+  band) and the title sits below.
+- Decorative oversized glyphs (giant quotation marks, percent signs,
+  hero numbers) do not exceed the canvas height. A `260 pt` hero is
+  a layout failure — the pipeline caps at 180 pt anyway.
+
+If a check fails, fix the SVG, then briefly state on the FIRST line
+of your response (before the ```svg``` fence): `Self-check: <what
+you fixed>` (or `Self-check: OK` if nothing needed fixing). This
+single line is informational only — the pipeline ignores it for
+SVG extraction.
