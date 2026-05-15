@@ -46,6 +46,11 @@ class ExecutePageRequest(ToolRequest):
     page_index: int = Field(..., ge=0)
     page_summary: str = Field(..., description="Per-page content outline (markdown).")
     images: list[ExecutorImage] = Field(default_factory=list)
+    # Deterministic per-page layout brief (P2.1). When set, injected
+    # as the first section of the user message so the LLM has hard
+    # bounding-box constraints to work inside. Optional so legacy
+    # callers (and unit tests that bypass generate_deck) still compile.
+    layout_brief_yaml: str | None = None
     style: ExecutorStyle = "general"
     lang: LangCode = DEFAULT_LANG
     model: str = DEFAULT_MODEL
@@ -242,13 +247,46 @@ def _build_system_prompt(style: ExecutorStyle, lang: LangCode) -> str:
         "consultant-top": "executor-consultant-top",
     }[style]
     variant = load_prompt(variant_role)
-    return f"{directive}\n\n---\n\n{base}\n\n---\n\n{variant}"
+    brief_directive = (
+        "## Layout brief contract\n\n"
+        "When the user message begins with a `## Layout brief` section, "
+        "those bounding boxes are HARD constraints:\n\n"
+        "- Place each visible element inside the zone whose role matches "
+        "  its semantic purpose (title in `title`, page number in "
+        "  `page_number`, etc.).\n"
+        "- Do NOT emit content outside `safe_area`. The 40 px margin on "
+        "  every edge is reserved.\n"
+        "- The page number zone always lives at the brief's declared "
+        "  position — render `NN / MM` (or `Page N`) inside that exact "
+        "  box. Do not invent a smaller box for it; the model has "
+        "  historically sized this at 42 px wide for 7-char text, "
+        "  which is too narrow.\n"
+        "- The chapter label zone is full-width across the top, separate "
+        "  from the title. Do NOT stack the chapter label on top of the "
+        "  title — they belong in different y-bands.\n"
+        "- Body / hero zones are guidance, not pixel-perfect cells. "
+        "  Stay inside their bounds; you may subdivide them.\n"
+        "- The brief's coordinate space is 1280×720. If you prefer to "
+        "  emit at a different resolution, you may — the pipeline "
+        "  normalises any 16:9 viewBox to canonical canvas before "
+        "  conversion.\n"
+    )
+    return f"{directive}\n\n---\n\n{base}\n\n---\n\n{brief_directive}\n\n---\n\n{variant}"
 
 
 def _build_user_message(req: ExecutePageRequest) -> str:
     lines: list[str] = []
     lines.append(f"# Page {req.page_index} ({req.lang})")
     lines.append("")
+    # Layout brief comes BEFORE spec_lock and page content. This is
+    # the hard-constraint section: the LLM should place every shape
+    # inside the declared zones rather than inventing coordinates.
+    if req.layout_brief_yaml:
+        lines.append("## Layout brief (HARD constraint — use these bounding boxes)")
+        lines.append("```yaml")
+        lines.append(req.layout_brief_yaml.strip())
+        lines.append("```")
+        lines.append("")
     lines.append("## spec_lock")
     lines.append("```yaml")
     lines.append(req.spec_lock.strip())
