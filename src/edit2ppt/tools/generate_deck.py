@@ -384,6 +384,13 @@ async def generate_deck(
     quality_resp = _run_quality_check(page_results, req.canvas_format, image_bytes_by_filename)
     cost = _merge_cost(cost, quality_resp.cost)
 
+    # Layout-repair surfaced its findings on each page's `warnings`
+    # list. Anything that couldn't be auto-fixed (`fix_applied=False`)
+    # should drive a retry — promote those to quality errors here so
+    # the retry loop sees them. Auto-fixed violations stay as warnings;
+    # the model doesn't need to re-attempt them.
+    _promote_layout_violations(page_results, quality_resp)
+
     # Per-page retry loop. Each round re-runs only the pages flagged as
     # `quality_error`. Stops when no errors remain or the retry budget is
     # exhausted. Failures are still reported as warnings on the final
@@ -640,7 +647,120 @@ _RETRY_HINTS: dict[str, str] = {
         "Do NOT include `<script>` or event-handler attributes. SVG must "
         "be static."
     ),
+    # Layout-repair violations the pass couldn't auto-fix. Each hint
+    # tells the model the exact box and dimensions to reposition.
+    "layout_overlap": (
+        "Two visible boxes overlap. Re-emit the page so every text element "
+        "occupies its own non-overlapping rectangle. Pay particular attention "
+        "to caption text sitting INSIDE a hero number's bounding box — push "
+        "the caption below the hero's bottom edge."
+    ),
+    "layout_text_overflow_x": (
+        "A `<text>` element's content is wider than the box that holds it. "
+        "Either widen the parent `<g>` / `<rect>` to fit the text, or move "
+        "the text to a longer container, or break it across two `<tspan>` "
+        "lines."
+    ),
+    "layout_off_canvas": (
+        "An element extends past the 1280×720 canvas. Move it back inside "
+        "the safe area (40 px margin on every edge, so x∈[40, 1240] and "
+        "y∈[40, 680])."
+    ),
+    "layout_empty_decoration": (
+        "An empty `<g>` / `<rect>` (no fill, no stroke, no children) was "
+        "stripped. Either give the shape a fill / stroke or remove it."
+    ),
 }
+
+
+def _promote_layout_violations(
+    page_results: dict,
+    quality_resp,
+) -> None:
+    """Convert unfixed layout violations from per-page warnings into
+    quality errors so the retry loop targets them.
+
+    Auto-fixed violations (the repair pass mutated the SVG) stay as
+    informational warnings — the operator can see what we changed,
+    but the model doesn't need to re-attempt. Only when the repair
+    couldn't safely fix the violation do we ask the model for a
+    better attempt.
+
+    The measured coordinates from `detail.actual` are embedded into
+    the message string so the downstream retry hint can quote them
+    back to the model verbatim. QualityIssue has no `detail` field,
+    so message is the carrier.
+    """
+    from .quality import QualityIssue
+
+    for page_index, page in page_results.items():
+        for w in getattr(page, "warnings", []) or []:
+            code = getattr(w, "code", "")
+            if not code.startswith("layout_"):
+                continue
+            detail = getattr(w, "detail", None) or {}
+            if detail.get("fix_applied") is True:
+                continue
+            quality_resp.issues.append(
+                QualityIssue(
+                    page_index=page_index,
+                    severity="error",
+                    code=code,
+                    message=_format_layout_violation_message(code, detail),
+                    location=f"slide_{page_index:02d}",
+                )
+            )
+            # The quality_resp `passed` flag tracks error presence; any
+            # new error means the overall pass is now failed.
+            quality_resp.passed = False
+
+
+def _format_layout_violation_message(code: str, detail: dict) -> str:
+    """Render a layout-repair violation as a human + machine-friendly
+    message with the measured coordinates baked in. The model reads
+    this back on retry and can correct against the exact numbers."""
+    actual = detail.get("actual") if isinstance(detail, dict) else None
+    if not isinstance(actual, dict):
+        return code.replace("_", " ")
+    if code == "layout_overlap":
+        small = actual.get("small_bbox")
+        big = actual.get("big_bbox")
+        ratio = actual.get("overlap_ratio")
+        if small and big:
+            sb = tuple(int(v) for v in small)
+            bb = tuple(int(v) for v in big)
+            r_pct = int((ratio or 0) * 100)
+            return (
+                f"두 요소가 {r_pct}% 겹침: 작은 박스 (x={sb[0]}, y={sb[1]}, "
+                f"w={sb[2]}, h={sb[3]}) 가 큰 박스 (x={bb[0]}, y={bb[1]}, "
+                f"w={bb[2]}, h={bb[3]}) 내부에 위치. 작은 박스를 큰 박스 "
+                f"아래 (y >= {bb[1] + bb[3] + 8}) 로 옮기세요."
+            )
+    if code == "layout_text_overflow_x":
+        req_w = actual.get("required_w")
+        box_w = actual.get("box_w")
+        text = actual.get("text")
+        if req_w and box_w:
+            return (
+                f"텍스트 \"{text}\" 가 박스 폭 ({int(box_w)}px) 보다 큼 "
+                f"(필요 최소 폭 {int(req_w)}px). 컨테이너 폭을 ≥{int(req_w)}px "
+                "로 늘리거나 텍스트를 두 줄로 나누세요."
+            )
+    if code == "layout_off_canvas":
+        bbox = actual.get("bbox")
+        if bbox:
+            b = tuple(int(v) for v in bbox)
+            return (
+                f"요소가 1280×720 캔버스 밖으로 나감 (x={b[0]}, y={b[1]}, "
+                f"w={b[2]}, h={b[3]}). 좌표를 safe area (40..1240, 40..680) "
+                "안으로 재배치하세요."
+            )
+    if code == "layout_empty_decoration":
+        return (
+            "내용 없는 <g>/<rect> (fill/stroke/자식 모두 없음) 가 제거됨. "
+            "장식이라면 fill 또는 stroke 을 지정하세요."
+        )
+    return code.replace("_", " ")
 
 
 def _build_retry_hint(errors: list[QualityIssueLike]) -> str:
@@ -665,9 +785,29 @@ def _build_retry_hint(errors: list[QualityIssueLike]) -> str:
     if codes_seen:
         for code in codes_seen:
             lines.append(f"> - {_RETRY_HINTS[code]}")
+    # Layout-* errors carry measured coordinates in their `.message`
+    # (populated by `_format_layout_violation_message`). Surface those
+    # alongside the directive so the model sees the exact numbers it
+    # needs to correct. Without this the model only gets the generic
+    # "fix the overlap" without knowing WHICH boxes overlap.
+    layout_msgs = [
+        e for e in errors
+        if (e.code or "").startswith("layout_") and (e.message or "")
+    ]
+    if layout_msgs:
+        lines.append("> Measurements from the previous attempt:")
+        seen_msgs: set[str] = set()
+        for err in layout_msgs:
+            if err.message in seen_msgs:
+                continue
+            seen_msgs.add(err.message)
+            lines.append(f">   • {err.message}")
     # Generic context — useful when the failure was from the legacy
     # quality checker (no machine-readable code).
-    other = [e for e in errors if e.code not in _RETRY_HINTS]
+    other = [
+        e for e in errors
+        if e.code not in _RETRY_HINTS and not (e.code or "").startswith("layout_")
+    ]
     if other:
         lines.append("> Additional quality errors to fix:")
         for err in other[:6]:  # cap; the rest is repetitive
