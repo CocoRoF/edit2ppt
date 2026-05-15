@@ -543,7 +543,15 @@ def _fix_overlap(elements: list[_Element]) -> list[LayoutViolation]:
 
     for i, a in enumerate(boxes):
         for b in boxes[i + 1 :]:
-            if _contained(a, b) or _contained(b, a):
+            # Containment is only "intentional layering" when one of
+            # the shapes is a non-text container (background card,
+            # accent rect, image). Two TEXT shapes where one contains
+            # the other is the canonical model error pattern — a
+            # chapter label rendered behind the title at the same y,
+            # a caption pinned inside a hero number's box. Treat
+            # text-in-text as overlap, fix below.
+            both_text = a.tag == "text" and b.tag == "text"
+            if not both_text and (_contained(a, b) or _contained(b, a)):
                 continue
             iou = _overlap_ratio(a, b)
             if iou < 0.4:
