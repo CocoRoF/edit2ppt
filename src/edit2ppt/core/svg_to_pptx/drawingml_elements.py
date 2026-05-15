@@ -992,8 +992,16 @@ def _build_run_xml(
     # annotations × 0.75). 12pt is the established floor for legibility
     # on a projector; anything below is a layout failure, not a
     # design choice.
+    # Clamp at both ends.
+    # Floor 12 pt — 11px SVG annotations × 0.75 ratio = 8.25 pt is
+    # illegible at projection scale.
+    # Ceiling 180 pt — production decks were emitting 255 pt hero
+    # numbers (340 px SVG) that took up half the slide and overlapped
+    # every other element. Above 180 pt is a layout failure, not a
+    # design choice; the converter caps so the rest of the slide can
+    # still read.
     raw_sz = round(fs_px * FONT_PX_TO_HUNDREDTHS_PT)
-    sz = max(raw_sz, 1200)
+    sz = max(min(raw_sz, 18000), 1200)
     b_attr = ' b="1"' if fw in ('bold', '600', '700', '800', '900') else ''
     i_attr = ' i="1"' if fstyle == 'italic' else ''
     u_attr = ' u="sng"' if 'underline' in text_dec else ''
