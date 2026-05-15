@@ -76,8 +76,99 @@ def validate_spec_lock(
     spec_lock = _resolve_icons(spec_lock, icons_dir, warnings)
     _check_required_fields(spec_lock, warnings)
     _check_windows_safe_font_tails(spec_lock, warnings)
+    _check_page_zones(spec_lock, warnings)
 
     return SpecLockValidation(spec_lock=spec_lock, warnings=warnings)
+
+
+def _check_page_zones(
+    spec_lock: str, warnings: list[ValidationWarning]
+) -> None:
+    """Validate `page_zones` bbox declarations against the canvas.
+
+    Errors caught here:
+      * Any zone whose bbox spills past the canvas (1280×720).
+      * Page-number zone narrower than 130 px (can't fit "NN / MM"
+        at 12 pt).
+      * Chapter-label and title zones whose y ranges overlap (the
+        deck_2.pptx slide-10 pattern).
+
+    The validator does NOT mutate the spec_lock — we surface warnings
+    so the operator (and the model on retry) see exactly what's
+    wrong. The layout-brief generator clamps off-canvas zones at
+    consumption time as a safety net.
+    """
+    if not spec_lock or "page_zones" not in spec_lock:
+        return
+    try:
+        import yaml
+        doc = yaml.safe_load(spec_lock)
+    except (ImportError, Exception):
+        return
+    if not isinstance(doc, dict):
+        return
+    zones_block = doc.get("page_zones")
+    if not isinstance(zones_block, dict):
+        return
+
+    offenders: list[dict] = []
+    for page_key, page_zones in zones_block.items():
+        if not isinstance(page_zones, dict):
+            continue
+        title_y_range = None
+        chapter_y_range = None
+        pn_width = None
+        for role, bbox in page_zones.items():
+            if not isinstance(bbox, dict):
+                continue
+            try:
+                x = int(bbox["x"]); y = int(bbox["y"])
+                w = int(bbox["w"]); h = int(bbox["h"])
+            except (KeyError, ValueError, TypeError):
+                continue
+            if x < 0 or y < 0 or x + w > 1280 or y + h > 720:
+                offenders.append({
+                    "page": str(page_key),
+                    "role": str(role),
+                    "issue": "off_canvas",
+                    "bbox": (x, y, w, h),
+                })
+            if role == "page_number":
+                pn_width = w
+            if role == "title":
+                title_y_range = (y, y + h)
+            if role == "chapter_label":
+                chapter_y_range = (y, y + h)
+        if pn_width is not None and pn_width < 130:
+            offenders.append({
+                "page": str(page_key),
+                "role": "page_number",
+                "issue": "page_number_too_narrow",
+                "actual_width": pn_width,
+                "minimum_required": 130,
+            })
+        if title_y_range and chapter_y_range:
+            t0, t1 = title_y_range
+            c0, c1 = chapter_y_range
+            if t0 < c1 and c0 < t1:
+                offenders.append({
+                    "page": str(page_key),
+                    "issue": "title_and_chapter_overlap_y",
+                    "title_y": title_y_range,
+                    "chapter_y": chapter_y_range,
+                })
+
+    if offenders:
+        warnings.append(
+            ValidationWarning(
+                code="spec_validator_page_zones",
+                message=(
+                    f"{len(offenders)} 개의 page_zones 항목에 문제가 있습니다 — "
+                    "off-canvas, page_number 너비 부족, title/chapter y 범위 겹침 중 하나."
+                ),
+                detail={"offenders": offenders[:10]},
+            )
+        )
 
 
 # ---------------------------------------------------------------------------

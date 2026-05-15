@@ -503,6 +503,27 @@ Templates are starting points. The Strategist may adjust based on content and au
    - **page_layouts (write only when a template is in use)**: For each page that inherits a template SVG, add `P<NN>: <svg_basename>` (e.g., `P04: 03a_content_image_text`). Pages designed freely get **no entry** — Executor reads the absence as "free design, no inheritance". If zero pages use a template, omit the section entirely.
    - **page_charts (write only for chart pages that match a catalog template)**: For each page in `design_spec.md §VII` whose `reference template path` points to `templates/charts/<name>.svg`, add `P<NN>: <chart_name>`. Pages with `no-template-match` in §VII MUST NOT appear here (Executor would look for a non-existent reference). If the deck has no data-visualization pages, omit the section.
    - **Hard rule**: Use both `page_layouts` and `page_charts` for the same page only when the layout template is a compatible shell for the chart. Do not pair chart pages with conflicting page layouts (e.g., `waterfall_chart` + timeline layout, KPI cards + circle-diagram layout). If no compatible layout exists, omit the page from `page_layouts`.
+   - **page_zones (strongly recommended)**: For each page declare the bounding boxes the Executor MUST honour. The engine reads this section before invoking the Executor and injects the boxes as the FIRST section of the user message. Format:
+     ```yaml
+     page_zones:
+       P01:
+         title: { x: 60, y: 100, w: 1180, h: 120 }
+         hero: { x: 60, y: 240, w: 1180, h: 300 }
+         subtitle: { x: 60, y: 560, w: 1180, h: 60 }
+         chapter_label: { x: 60, y: 40, w: 1180, h: 24 }
+         page_number: { x: 1100, y: 684, w: 140, h: 20 }
+         footer: { x: 60, y: 680, w: 1180, h: 24 }
+       P02:
+         title: { x: 60, y: 100, w: 1180, h: 80 }
+         body: { x: 60, y: 200, w: 1180, h: 450 }
+         page_number: { x: 1100, y: 684, w: 140, h: 20 }
+         footer: { x: 60, y: 680, w: 1180, h: 24 }
+     ```
+     Rules:
+     - Coordinates are SVG pixels in a 1280×720 canonical canvas (the pipeline normalises any 16:9 resolution).
+     - Zone roles understood by the engine: `title`, `subtitle`, `hero`, `body`, `image`, `chapter_label`, `page_number`, `footer`. Other roles are passed through to the model but the engine doesn't validate them.
+     - Every zone fits inside the canvas. Page-number zone width ≥ 130 px (must hold "NN / MM" at 12 pt). Chapter-label and title zones do not share their y range.
+     - When you omit `page_zones` (or omit a specific page), the engine falls back to rhythm-based defaults from `page_rhythm`. Don't fabricate zones you don't need — incomplete coverage is fine.
 
 ---
 
