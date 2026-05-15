@@ -404,11 +404,51 @@ def get_effective_filter_id(elem: ET.Element, ctx: ConvertContext) -> str | None
 # Font parsing
 # ---------------------------------------------------------------------------
 
+import re as _re
+
+# Trailing numeric weight glued onto a CSS font-family value
+# (`font-family="Pretendard 700"`). PowerPoint then looks up a literal
+# font called "Pretendard 700", fails, and falls back to the system
+# default — which on Windows means Korean titles render in Calibri.
+# Strip the suffix before the lookup so the bare family name hits the
+# EA_FONTS / FONT_FALLBACK_WIN tables the way the user meant it to.
+#
+# Only numeric tokens are stripped because word-form weight names
+# legitimately appear inside real family names (`Arial Black`,
+# `Helvetica Neue Light`, `Lucida Bright`, ...). The CSS spec allows
+# numeric weights only on `font-weight`, never inside `font-family`,
+# so a trailing `100`-`900` is unambiguously a model error.
+_NUMERIC_WEIGHT_SUFFIX_RE = _re.compile(r"\s+[1-9]00$")
+
+
+def _strip_weight_suffix(font_name: str) -> str:
+    """Strip a trailing numeric CSS-weight token from *font_name*.
+
+    >>> _strip_weight_suffix('Pretendard 700')
+    'Pretendard'
+    >>> _strip_weight_suffix('Pretendard Variable 900')
+    'Pretendard Variable'
+    >>> _strip_weight_suffix('Arial Black')   # genuine family name
+    'Arial Black'
+    >>> _strip_weight_suffix('Inter 400 Display')   # mid-string, leave it
+    'Inter 400 Display'
+    """
+    if not font_name:
+        return font_name
+    return _NUMERIC_WEIGHT_SUFFIX_RE.sub('', font_name).strip()
+
+
 def parse_font_family(font_family_str: str) -> dict[str, str]:
     """Parse CSS font-family into latin/ea typeface names.
 
     Prioritizes Windows-available fonts since PPTX is primarily opened on
     Windows. macOS/Linux-only fonts are mapped via FONT_FALLBACK_WIN.
+
+    Robustness: tolerates `font-family="Pretendard 700"` (weight glued
+    into the family name) by stripping recognised weight tokens before
+    the typeface lookup. The font-weight is still expected to arrive via
+    the SVG `font-weight` attribute — this function only normalises the
+    NAME used in the OOXML latin/ea elements.
     """
     if not font_family_str:
         return {'latin': 'Segoe UI', 'ea': 'Microsoft YaHei'}
@@ -416,13 +456,17 @@ def parse_font_family(font_family_str: str) -> dict[str, str]:
     fonts = [f.strip().strip("'\"") for f in font_family_str.split(',')]
     latin_font = None
     ea_font = None
+    # Track the generic fallback separately so it only applies when no
+    # explicit family resolved — `sans-serif` at the end of a Korean
+    # stack must NOT preempt the Pretendard → Malgun Gothic mapping.
+    generic_fallback = None
 
     for font in fonts:
+        font = _strip_weight_suffix(font)
         if font in SYSTEM_FONTS:
             continue
         if font in GENERIC_FONT_MAP:
-            resolved = GENERIC_FONT_MAP[font]
-            latin_font = latin_font or resolved
+            generic_fallback = generic_fallback or GENERIC_FONT_MAP[font]
             continue
 
         win_font = FONT_FALLBACK_WIN.get(font, font)
@@ -431,11 +475,15 @@ def parse_font_family(font_family_str: str) -> dict[str, str]:
         else:
             latin_font = latin_font or win_font
 
-    # PPT renders CJK text via latin typeface when ea doesn't match
+    # PPT renders CJK text via the latin typeface when ea doesn't match,
+    # so when the stack named only CJK families (Pretendard, Malgun
+    # Gothic, ...) mirror the ea pick into latin too. Otherwise the
+    # Korean run would render in whichever generic the stack ended on
+    # (`sans-serif` → Segoe UI), losing Hangul glyph weighting.
     if not latin_font and ea_font:
         latin_font = ea_font
 
-    final_latin = latin_font or 'Segoe UI'
+    final_latin = latin_font or generic_fallback or 'Segoe UI'
 
     # EA must always be a CJK-capable font
     if not ea_font:

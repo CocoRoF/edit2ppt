@@ -986,7 +986,13 @@ def _build_run_xml(
 
     text_dec = run.get('text_decoration', '')
 
-    sz = round(fs_px * FONT_PX_TO_HUNDREDTHS_PT)
+    # 1 SVG px = 0.75 pt (web-standard CSS conversion). Round to
+    # hundredths-of-a-point. Enforce a 9pt floor: production decks were
+    # emitting <a:t> blocks at 8.25pt (an 11px SVG annotation) which is
+    # illegible at projection scale. Smaller floors break legitimate
+    # tiny labels; 9pt is the smallest size that survives projection.
+    raw_sz = round(fs_px * FONT_PX_TO_HUNDREDTHS_PT)
+    sz = max(raw_sz, 900)
     b_attr = ' b="1"' if fw in ('bold', '600', '700', '800', '900') else ''
     i_attr = ' i="1"' if fstyle == 'italic' else ''
     u_attr = ' u="sng"' if 'underline' in text_dec else ''
