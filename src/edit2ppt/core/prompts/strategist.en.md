@@ -652,3 +652,74 @@ This is the Track A discipline from
 [ppt-master-analysis/06-bilingual-conventions.md](../../../ppt-master-analysis/06-bilingual-conventions.md):
 **filesystem / code / config keys in English, user-facing text in Korean.**
 
+
+---
+
+## Z. Self-check before emitting
+
+After producing both `design_spec` and `spec_lock`, run through this
+checklist verbatim. If any check fails, fix the output BEFORE emitting
+the fenced blocks. Do NOT skip the check; the pipeline relies on its
+discipline more than any other safety net.
+
+### Z.1 Counts and indexes
+
+- `project.pages_total` (or `page_count`) is declared in `spec_lock`
+  and equals the number of `#### Slide NN` / `#### P0N. ...` entries
+  in `design_spec §IX`.
+- Every page id from `P01` onward is consecutive; no gaps, no
+  duplicates.
+- The chart / template references in `design_spec §VII` use the
+  format `- P0N · <CHART TYPE>`. They are reference rows, not page
+  entries — never confuse them with `§IX`.
+
+### Z.2 Color palette
+
+- Every hex literal is 6-digit uppercase (`#0A1628` not `#0a1628` and
+  not `#abc`). No `rgb(...)` / `rgba(...)` / named colors.
+- Total declared palette ≤ 6 colors. Background variants (alpha
+  layering, hover states) belong inside CSS opacity, not separate
+  hex entries.
+
+### Z.3 Typography
+
+- Every font stack ends with a Windows-installed family
+  (`"Malgun Gothic"`, `Arial`, `Times New Roman`, `Consolas`, etc.).
+  Pretendard / Inter / Roboto leading stacks are fine — the tail
+  must be Windows-safe.
+- Numeric font sizes are emitted as integers in the 12-180 pt band.
+  Below 12 pt is illegible at projection; above 180 pt is a layout
+  failure.
+
+### Z.4 Icons
+
+- Every icon name in `icons.inventory` is a real filename under
+  `templates/icons/<library>/`. Use the exact convention the library
+  uses — `arrow-trend-up` not `trending-up`, `brain-2` not `brain`.
+- All icon entries share ONE `library`. Do not mix libraries on the
+  same deck.
+
+### Z.5 Images
+
+- Every entry in `images.list` declares `acquire_via`
+  (`ai` / `web` / `placeholder`).
+- The `placeholder` text is the bare filename
+  (`hero_q3_revenue.png`), never with a leading directory
+  (`../images/hero_q3_revenue.png`).
+- When `acquire_via: placeholder`, the slide's outline notes
+  this so the Executor knows to render an empty container, not a
+  missing-asset rectangle.
+
+### Z.6 Layout zones (when emitting `page_layouts`)
+
+- Every zone's `(x, y, w, h)` is non-negative and `x+w <= 1280` and
+  `y+h <= 720`. No off-canvas zones.
+- Page-number zone width is at least 130 px and height at least
+  20 px. Anything smaller cannot fit "NN / MM" at 12 pt.
+- The chapter-label zone and the title zone do NOT share their y
+  range. Chapter labels sit at the very top band; titles start
+  below.
+
+If a check fails, **fix the output, do not append a "known issue"
+note**. The downstream pipeline trusts the spec_lock as the
+canonical contract.
