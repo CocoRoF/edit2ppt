@@ -163,6 +163,11 @@ class GenerateDeckResponse(ToolResponse):
     detected_langs: list[LangCode]
     quality_issues: list[QualityIssue]
     cost: CostBreakdown
+    # Structural snapshot of the assembled deck (see
+    # ``_export_metrics.ExportMetrics``). Optional so older callers
+    # / tests that don't pass through the export stage still construct
+    # cleanly.
+    export_metrics: dict = Field(default_factory=dict)
     warnings: list[WarningEntry] = Field(default_factory=list)
 
 
@@ -508,6 +513,35 @@ async def generate_deck(
         duration_seconds=time.perf_counter() - started,
     )
 
+    # Post-export metrics: re-open the freshly-built pptx in memory and
+    # collect slide-level structural statistics. Cheap (one zip+xml
+    # pass) and gives the operator a "deck health" snapshot they can
+    # see in the UI alongside the download button.
+    from ._export_metrics import compute_export_metrics
+    export_metrics = compute_export_metrics(export_resp.pptx)
+    if export_metrics.placeholder_slides:
+        warnings.append(
+            WarningEntry(
+                code="export_placeholder_slides",
+                message=(
+                    f"{export_metrics.placeholder_slides}장이 placeholder 로 대체되었습니다 "
+                    f"— 해당 슬라이드 SVG 변환이 실패해 빈 안내 카드로 대체됨."
+                ),
+                detail={"placeholder_count": export_metrics.placeholder_slides},
+            )
+        )
+    if export_metrics.color_palette_size > 12:
+        warnings.append(
+            WarningEntry(
+                code="export_palette_too_large",
+                message=(
+                    f"색상 팔레트가 {export_metrics.color_palette_size}개 "
+                    "(spec_lock 권장 ~6개) — 디자인 일관성을 위해 축소를 검토하세요."
+                ),
+                detail={"palette_size": export_metrics.color_palette_size},
+            )
+        )
+
     await _emit(on_event, StageEvent(stage="done", progress=1.0, message_key="stages.done"))
 
     return GenerateDeckResponse(
@@ -517,6 +551,7 @@ async def generate_deck(
         design_spec=strat.design_spec,
         detected_langs=export_resp.detected_langs,
         quality_issues=quality_resp.issues,
+        export_metrics=export_metrics.to_dict(),
         cost=cost,
         warnings=warnings,
     )
