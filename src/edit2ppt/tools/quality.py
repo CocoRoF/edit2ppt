@@ -114,12 +114,88 @@ def check_svg_quality(req: QualityCheckRequest) -> QualityCheckResponse:
                     )
                 )
 
+            # Stylistic discipline: palette + font diversity. These are
+            # warnings (not errors) — the deck still ships, but the
+            # operator sees that the LLM drifted away from spec_lock.
+            for code, msg, detail in _style_discipline_issues(slide.svg):
+                issues.append(
+                    QualityIssue(
+                        page_index=slide.index,
+                        severity="warning",
+                        code=code,
+                        message=msg,
+                        location=slide.name,
+                    )
+                )
+
     passed = not any(i.severity == "error" for i in issues)
     return QualityCheckResponse(
         issues=issues,
         passed=passed,
         cost=CostBreakdown(duration_seconds=time.perf_counter() - started),
     )
+
+
+def _style_discipline_issues(svg: str) -> list[tuple[str, str, dict]]:
+    """Surface per-slide stylistic drift from spec_lock conventions.
+
+    Two checks, both **warnings** (don't trigger retry, just inform):
+
+    * ``style_palette_too_large`` — > 8 distinct hex colors on one
+      slide. The spec_lock palette discipline targets 4-6 colors; >8
+      means the LLM invented alpha-variants or accent tones outside
+      the declared palette.
+    * ``style_font_diversity_high`` — > 3 distinct font families on
+      one slide. spec_lock.typography typically declares 1-2 stacks;
+      anything past 3 is the LLM mixing decorative fonts the model
+      pulled from training data (Times New Roman / Nanum Myeongjo
+      etc. showed up in deck_2.pptx beyond the declared Pretendard +
+      Malgun Gothic).
+    """
+    import re
+
+    issues: list[tuple[str, str, dict]] = []
+
+    # Hex colors — capture every #RRGGBB or #RGB in the slide. Lower
+    # the string first so we count `#0a0a0a` and `#0A0A0A` as one hue.
+    colors = set()
+    for m in re.finditer(r"#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b", svg):
+        v = m.group(1).lower()
+        if len(v) == 3:
+            v = v[0] * 2 + v[1] * 2 + v[2] * 2
+        colors.add(v)
+    if len(colors) > 8:
+        issues.append((
+            "style_palette_too_large",
+            (
+                f"슬라이드에 {len(colors)}개의 색상이 사용됨 (권장 ≤ 8). "
+                "spec_lock 의 palette 외부 색상이 섞였을 가능성이 큽니다."
+            ),
+            {"colors_count": len(colors)},
+        ))
+
+    # Font families. Look for `font-family="..."` and `font-family:` in
+    # inline style. The promoter (P1.4) already lifted inline style →
+    # attribute, but legacy / hand-written SVG may still carry both.
+    fonts = set()
+    for m in re.finditer(r'font-family\s*[:=]\s*["\']?([^"\';\n]+)', svg):
+        stack = m.group(1)
+        # Take only the FIRST font in the stack — that's the one the
+        # model picked. Fallbacks are commodity by definition.
+        first = stack.split(",", 1)[0].strip().strip("\"'")
+        if first:
+            fonts.add(first)
+    if len(fonts) > 3:
+        issues.append((
+            "style_font_diversity_high",
+            (
+                f"슬라이드에 {len(fonts)}개의 폰트 family 가 사용됨 (권장 ≤ 3). "
+                "spec_lock.typography 의 스택에서 벗어났을 가능성이 있습니다."
+            ),
+            {"fonts": sorted(fonts)},
+        ))
+
+    return issues
 
 
 def _converter_parity_issues(svg: str) -> list[tuple[str, str]]:
