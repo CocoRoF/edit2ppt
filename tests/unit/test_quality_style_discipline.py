@@ -43,9 +43,8 @@ def test_within_threshold_no_warning():
 
 
 def test_palette_inflation_warned():
-    """10 hex colors on one slide → palette warning."""
-    colors = ["#FF0000", "#00FF00", "#0000FF", "#FFFF00", "#FF00FF",
-              "#00FFFF", "#888888", "#333333", "#FF8800", "#88FF00"]
+    """16 hex colors on one slide → palette warning (threshold > 14)."""
+    colors = [f"#{i:02x}0000" for i in range(0x10, 0x80, 0x07)]  # 16 reds
     rects = "".join(
         f'<rect x="0" y="{i*10}" width="10" height="10" fill="{c}"/>'
         for i, c in enumerate(colors)
@@ -57,6 +56,24 @@ def test_palette_inflation_warned():
     )
     resp = _resp(svg)
     assert "style_palette_too_large" in _codes(resp)
+
+
+def test_disciplined_10_color_palette_does_not_warn():
+    """A real disciplined deck (deck_3.pptx slide 2) uses 10 colors:
+    1 bg + 4 layering variants + 3 grays + 2 accents. Must not flag."""
+    colors = ["#00D9FF", "#0A0E1A", "#141A2E", "#1C2440", "#2A3454",
+              "#6B7280", "#7B61FF", "#9CA3AF", "#F5F7FA", "#FF6B35"]
+    rects = "".join(
+        f'<rect x="0" y="{i*10}" width="10" height="10" fill="{c}"/>'
+        for i, c in enumerate(colors)
+    )
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720">'
+        f'{rects}'
+        '</svg>'
+    )
+    resp = _resp(svg)
+    assert "style_palette_too_large" not in _codes(resp)
 
 
 def test_short_hex_counted_alongside_long_hex():
@@ -102,7 +119,7 @@ def test_font_diversity_counts_first_in_stack_only():
 def test_palette_and_font_can_both_fire():
     """Both warnings independent; one slide can carry both."""
     rects = "".join(
-        f'<rect fill="#{i:06x}"/>' for i in range(0x100000, 0x10000a)
+        f'<rect fill="#{i:06x}"/>' for i in range(0x100000, 0x100010)
     )
     texts = "".join(
         f'<text font-family="Font{i}">x</text>' for i in range(6)
@@ -120,7 +137,7 @@ def test_warnings_dont_fail_quality_pass():
     """A deck with only style warnings should still pass quality (no
     errors). Retry must NOT trigger on stylistic drift."""
     rects = "".join(
-        f'<rect fill="#{i:06x}"/>' for i in range(0x100000, 0x10000a)
+        f'<rect fill="#{i:06x}"/>' for i in range(0x100000, 0x100010)
     )
     svg = (
         '<svg xmlns="http://www.w3.org/2000/svg" '

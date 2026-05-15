@@ -187,12 +187,16 @@ def _style_discipline_issues(svg: str) -> list[tuple[str, str, dict]]:
         if len(v) == 3:
             v = v[0] * 2 + v[1] * 2 + v[2] * 2
         colors.add(v)
-    if len(colors) > 8:
+    # Threshold calibrated against real disciplined decks (deck_3.pptx
+    # analysis): a healthy slide uses 1 background + 3-4 background
+    # layering variants + 3 grays for text hierarchy + 2-3 accents,
+    # which is 9-12 colors. Above 14 is genuine drift.
+    if len(colors) > 14:
         issues.append((
             "style_palette_too_large",
             (
-                f"슬라이드에 {len(colors)}개의 색상이 사용됨 (권장 ≤ 8). "
-                "spec_lock 의 palette 외부 색상이 섞였을 가능성이 큽니다."
+                f"슬라이드에 {len(colors)}개의 색상이 사용됨 (권장 ≤ 14). "
+                "spec_lock 의 palette 외부 색상이 다수 섞였을 가능성이 큽니다."
             ),
             {"colors_count": len(colors)},
         ))
