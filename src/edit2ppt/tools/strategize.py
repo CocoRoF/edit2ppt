@@ -104,6 +104,23 @@ async def strategize(
 
     design_spec, spec_lock = _split_output(result.text, warnings)
 
+    # Deterministic post-Strategist validation: normalise hex colors,
+    # fuzzy-resolve icon names, surface missing fields. The validator
+    # rewrites spec_lock when it can fix something deterministically;
+    # everything else lands in `warnings` for the operator.
+    from pathlib import Path as _Path
+    from ._spec_validator import validate_spec_lock as _validate_spec_lock
+    _icons_dir = (
+        _Path(__file__).resolve().parent.parent
+        / "core" / "templates" / "icons"
+    )
+    _validation = _validate_spec_lock(spec_lock, icons_dir=_icons_dir)
+    spec_lock = _validation.spec_lock
+    for _v in _validation.warnings:
+        warnings.append(
+            WarningEntry(code=_v.code, message=_v.message, detail=_v.detail)
+        )
+
     return StrategizeResponse(
         raw_output=result.text,
         design_spec=design_spec,
