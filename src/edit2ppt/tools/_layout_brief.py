@@ -174,6 +174,71 @@ def _parse_rhythm_from_spec_lock(spec_lock: str) -> dict[int, str]:
     return out
 
 
+_KNOWN_ZONE_ROLES = {
+    "title", "subtitle", "hero", "body", "image",
+    "chapter_label", "page_number", "footer",
+}
+
+
+def _parse_zones_from_spec_lock(spec_lock: str) -> dict[int, list[Zone]]:
+    """Parse the `page_zones` section the Strategist may emit.
+
+    Format (YAML):
+        page_zones:
+          P01:
+            title: { x: 60, y: 100, w: 1180, h: 120 }
+            hero:  { x: 60, y: 240, w: 1180, h: 300 }
+
+    Returns a dict keyed by 1-based page index. Zones with unknown
+    roles are kept (passed through to the model verbatim) but the
+    canvas/bbox validation applies regardless.
+
+    Best-effort: YAML parse errors return an empty dict so the
+    rhythm-based defaults still drive the brief.
+    """
+    if not spec_lock or "page_zones" not in spec_lock:
+        return {}
+    try:
+        import yaml
+        doc = yaml.safe_load(spec_lock)
+    except (yaml.YAMLError, ImportError):
+        return {}
+    if not isinstance(doc, dict):
+        return {}
+    zones_block = doc.get("page_zones")
+    if not isinstance(zones_block, dict):
+        return {}
+
+    out: dict[int, list[Zone]] = {}
+    for page_key, page_zones in zones_block.items():
+        if not isinstance(page_zones, dict):
+            continue
+        m = re.match(r"^P0*(\d{1,3})$", str(page_key), re.IGNORECASE)
+        if not m:
+            continue
+        idx = int(m.group(1))
+        per_page: list[Zone] = []
+        for role, bbox in page_zones.items():
+            if not isinstance(bbox, dict):
+                continue
+            try:
+                x = int(bbox["x"]); y = int(bbox["y"])
+                w = int(bbox["w"]); h = int(bbox["h"])
+            except (KeyError, ValueError, TypeError):
+                continue
+            # Clamp into canvas. Off-canvas zones silently fold back
+            # rather than raising — the spec validator surfaces the
+            # original error if it cares.
+            x = max(0, min(_CANVAS_W - 1, x))
+            y = max(0, min(_CANVAS_H - 1, y))
+            w = max(1, min(_CANVAS_W - x, w))
+            h = max(1, min(_CANVAS_H - y, h))
+            per_page.append(Zone(role=str(role), x=x, y=y, w=w, h=h))
+        if per_page:
+            out[idx] = per_page
+    return out
+
+
 def build_layout_briefs(
     *,
     spec_lock: str,
@@ -185,17 +250,34 @@ def build_layout_briefs(
     spec_lock when declared; otherwise we default to ``dense`` for
     interior pages and ``anchor`` for the first and last page (cover
     + closing are the canonical anchor positions).
+
+    `page_zones` in spec_lock (Strategist's explicit zone bboxes) take
+    precedence over the rhythm-based default for any role the
+    Strategist declared. Missing roles fall back to the rhythm
+    default — so the Strategist can declare just the unusual zones
+    and let the engine handle the standard ones (page_number,
+    footer, chapter_label).
     """
     if page_count <= 0:
         return []
     declared = _parse_rhythm_from_spec_lock(spec_lock)
+    declared_zones = _parse_zones_from_spec_lock(spec_lock)
     briefs: list[PageLayoutBrief] = []
     for i in range(page_count):
         idx_1based = i + 1
         rhythm = declared.get(idx_1based)
         if rhythm is None:
             rhythm = "anchor" if i == 0 or i == page_count - 1 else "dense"
-        zones = _zones_for_rhythm(rhythm) + [_chapter_label_zone()] + _footer_zones()
+
+        default_zones = (
+            _zones_for_rhythm(rhythm) + [_chapter_label_zone()] + _footer_zones()
+        )
+        page_declared = declared_zones.get(idx_1based, [])
+        # Merge: Strategist's per-role declarations override defaults
+        # of the same role. Roles the Strategist didn't touch keep
+        # the rhythm-based defaults.
+        zones = _merge_zones(default_zones, page_declared)
+
         briefs.append(
             PageLayoutBrief(
                 page_index=i,
@@ -205,6 +287,31 @@ def build_layout_briefs(
             )
         )
     return briefs
+
+
+def _merge_zones(defaults: list[Zone], declared: list[Zone]) -> list[Zone]:
+    """Per-role override: declared zones win over defaults for the
+    same role. Roles declared only in `declared` are appended;
+    roles only in defaults stay. Returns a fresh list, defaults-
+    first for stable ordering."""
+    declared_by_role: dict[str, Zone] = {}
+    for z in declared:
+        declared_by_role[z.role] = z
+    out: list[Zone] = []
+    seen_roles: set[str] = set()
+    for z in defaults:
+        if z.role in declared_by_role:
+            out.append(declared_by_role[z.role])
+        else:
+            out.append(z)
+        seen_roles.add(z.role)
+    # Any declared role we haven't emitted yet (e.g., a custom role
+    # the Strategist invented).
+    for z in declared:
+        if z.role not in seen_roles:
+            out.append(z)
+            seen_roles.add(z.role)
+    return out
 
 
 def render_brief_yaml(brief: PageLayoutBrief) -> str:
