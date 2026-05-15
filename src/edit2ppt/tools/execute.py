@@ -96,12 +96,20 @@ async def execute_page(
     )
 
     svg, notes = _parse_output(result.text, warnings)
-    # Backfill missing `id` on top-level <g> children. Quality runs on
-    # the executor's output verbatim; without this every anonymous
-    # decorative group produces a `Top-level visible <g> #N has no id`
-    # warning. Doing it here means the same normalised SVG flows
-    # through quality, retry, export, and the final PPTX.
+    # Normalise the LLM's raw SVG before it flows downstream. Quality
+    # and export both run on this exact string — every fix-up applied
+    # here means one less stage-specific patch elsewhere:
+    #   * id-backfill on anonymous top-level <g> (kills the
+    #     `<g> has no id` warning class).
+    #   * <image href> normalised to bare basename. The model loves to
+    #     prefix references with `../images/`, which doesn't resolve in
+    #     the workspace where images sit alongside SVGs.
+    #   * Strip `opacity` from <image> (PPT doesn't support image
+    #     opacity; the legacy checker bans it. We could decompose into
+    #     image + overlay rect but losing the mute is acceptable for
+    #     keeping the build green).
     svg = _autoid_top_level_groups(svg)
+    svg, image_basenames = _normalise_image_refs(svg, req.images)
 
     return ExecutePageResponse(
         page_index=req.page_index,
@@ -269,6 +277,88 @@ def _parse_output(text: str, warnings: list[WarningEntry]) -> tuple[str, str]:
     notes_match = _NOTES_BLOCK_RE.search(text)
     notes = notes_match.group(1).strip() if notes_match else ""
     return svg, notes
+
+
+def _normalise_image_refs(svg: str, available: list) -> tuple[str, set[str]]:
+    """Make every `<image>` resilient to the workspace layout.
+
+    Three transforms applied in one pass:
+      1. `href` (or `xlink:href`) is reduced to the **basename** of the
+         path. The model frequently writes `../images/cover_bg.png`
+         expecting an `images/` subfolder; export puts the bytes
+         directly next to the SVG. Normalising to `cover_bg.png` makes
+         the reference resolve regardless of layout.
+      2. The `opacity` attribute is removed — PPTX has no native
+         image opacity, the legacy quality rule bans it, and the
+         tiniest production case where this fires (a chapter divider
+         dimmed for readability) is acceptable to render at full
+         opacity. The retry hint would otherwise loop the model
+         needlessly.
+      3. `<image>` elements whose basename is not in the executor's
+         image bundle are dropped entirely — the reference would
+         dangle and crash the converter. The slide loses a decoration
+         but stays intact.
+
+    Returns (svg, basenames_referenced). The basename set lets the
+    caller cross-check against the bundle.
+
+    Best effort: parse failures fall through, returning the input.
+    """
+    if not svg or "<image" not in svg:
+        return svg, set()
+    try:
+        from xml.etree import ElementTree as ET
+        root = ET.fromstring(svg)
+    except ET.ParseError:
+        return svg, set()
+
+    SVG_NS = "http://www.w3.org/2000/svg"
+    XLINK_NS = "http://www.w3.org/1999/xlink"
+
+    # Build the lookup set of bundled basenames.
+    bundle: set[str] = set()
+    for img in available or []:
+        url = getattr(img, "url", None)
+        if url:
+            bundle.add(url.rsplit("/", 1)[-1])
+
+    parent_of: dict[ET.Element, ET.Element] = {}
+    for p in root.iter():
+        for c in p:
+            parent_of[c] = p
+
+    referenced: set[str] = set()
+    drops: list[tuple[ET.Element, ET.Element]] = []
+
+    for elem in list(root.iter()):
+        tag = elem.tag.split("}", 1)[-1] if "}" in elem.tag else elem.tag
+        if tag != "image":
+            continue
+
+        href = elem.get("href") or elem.get(f"{{{XLINK_NS}}}href")
+        if href and not href.startswith("data:"):
+            basename = href.rsplit("/", 1)[-1]
+            if elem.get("href") is not None:
+                elem.set("href", basename)
+            else:
+                elem.set(f"{{{XLINK_NS}}}href", basename)
+            referenced.add(basename)
+            # If the basename isn't in the bundle, drop the element —
+            # better a slide missing one decoration than a crash.
+            if bundle and basename not in bundle:
+                parent = parent_of.get(elem)
+                if parent is not None:
+                    drops.append((parent, elem))
+
+        if "opacity" in elem.attrib:
+            del elem.attrib["opacity"]
+
+    for parent, elem in drops:
+        parent.remove(elem)
+
+    ET.register_namespace("", SVG_NS)
+    ET.register_namespace("xlink", XLINK_NS)
+    return ET.tostring(root, encoding="unicode"), referenced
 
 
 def _autoid_top_level_groups(svg: str) -> str:
