@@ -395,8 +395,20 @@ async def generate_deck(
     # `quality_error`. Stops when no errors remain or the retry budget is
     # exhausted. Failures are still reported as warnings on the final
     # response — `fail_on_quality_error=True` is checked AFTER retries.
-    retries_left = req.retry_pages_on_quality_error
-    while retries_left > 0:
+    # Retry budget tracked two ways:
+    #   * per_page_cap — max retries for any single page
+    #   * total_remaining — global cap across all retries this deck
+    # The legacy `retry_pages_on_quality_error: int` is interpreted as
+    # the per-page cap; the total cap derives from page_count * per-page
+    # with a hard floor of 6 so that a single misbehaving page can't
+    # exhaust the total before others get any attempts.
+    per_page_cap = req.retry_pages_on_quality_error
+    total_remaining = max(6, len(page_summaries) * per_page_cap)
+    per_page_attempts: dict[int, int] = {}
+    round_n = 0
+
+    while total_remaining > 0:
+        round_n += 1
         # Group every error per page so the retry hint can name every
         # rule the previous attempt broke. A generic "make it simpler"
         # nudge isn't enough — the model has to know exactly which
@@ -406,18 +418,61 @@ async def generate_deck(
             if issue.severity != "error" or issue.page_index is None:
                 continue
             errors_by_page.setdefault(issue.page_index, []).append(issue)
-        failing_pages = sorted(errors_by_page.keys())
+
+        # Filter out pages that have exhausted their per-page budget.
+        # Skipped pages keep their last quality state and surface a
+        # warning so the operator can see they were dropped.
+        failing_pages = sorted(
+            i for i in errors_by_page.keys()
+            if per_page_attempts.get(i, 0) < per_page_cap
+        )
+        exhausted = sorted(
+            i for i in errors_by_page.keys()
+            if per_page_attempts.get(i, 0) >= per_page_cap
+        )
+        if exhausted:
+            warnings.append(
+                WarningEntry(
+                    code="retry_per_page_cap_reached",
+                    message=(
+                        f"{len(exhausted)} 페이지가 per-page 재시도 한도 "
+                        f"({per_page_cap}회) 에 도달해 더 이상 시도하지 않습니다."
+                    ),
+                    detail={"pages": exhausted, "per_page_cap": per_page_cap},
+                )
+            )
         if not failing_pages:
             break
+
+        # Cap the round to the remaining total budget.
+        if len(failing_pages) > total_remaining:
+            picked = failing_pages[:total_remaining]
+            dropped = failing_pages[total_remaining:]
+            warnings.append(
+                WarningEntry(
+                    code="retry_total_budget_reached",
+                    message=(
+                        f"전체 재시도 예산이 {total_remaining}회 남아 "
+                        f"{len(picked)} 페이지만 시도하고 나머지 {len(dropped)} 페이지는 보류합니다."
+                    ),
+                    detail={
+                        "picked": picked,
+                        "dropped": dropped,
+                        "total_remaining": total_remaining,
+                    },
+                )
+            )
+            failing_pages = picked
 
         warnings.append(
             WarningEntry(
                 code="quality_retry",
                 message=(
                     f"Retrying {len(failing_pages)} page(s) with quality errors "
-                    f"(round {req.retry_pages_on_quality_error - retries_left + 1})."
+                    f"(round {round_n}, per-page cap={per_page_cap}, "
+                    f"total remaining={total_remaining})."
                 ),
-                detail={"pages": failing_pages},
+                detail={"pages": failing_pages, "round": round_n},
             )
         )
         retry_reqs = [
@@ -445,10 +500,13 @@ async def generate_deck(
         warnings.extend(retry_batch.warnings)
         for r in retry_batch.results:
             page_results[r.page_index] = r
+        for i in failing_pages:
+            per_page_attempts[i] = per_page_attempts.get(i, 0) + 1
+            total_remaining -= 1
 
         quality_resp = _run_quality_check(page_results, req.canvas_format, image_bytes_by_filename)
         cost = _merge_cost(cost, quality_resp.cost)
-        retries_left -= 1
+        _promote_layout_violations(page_results, quality_resp)
 
     # Surface unresolved quality errors and (when configured) hard-fail.
     if not quality_resp.passed:
@@ -456,8 +514,9 @@ async def generate_deck(
         if req.fail_on_quality_error:
             raise RuntimeError(
                 f"Quality check failed with {len(errors)} error(s) after "
-                f"{req.retry_pages_on_quality_error} retry round(s). "
-                "Set fail_on_quality_error=False to export anyway."
+                f"{round_n} retry round(s) (per-page cap "
+                f"{per_page_cap}). Set fail_on_quality_error=False to "
+                "export anyway."
             )
         warnings.append(
             WarningEntry(
