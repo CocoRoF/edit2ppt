@@ -38,6 +38,15 @@ class QualityCheckRequest(ToolRequest):
         default=False,
         description="Skip spec_lock drift / image attribution checks for template authoring.",
     )
+    images: dict[str, bytes] = Field(
+        default_factory=dict,
+        description=(
+            "Image files (by basename) the slides reference. Written to the "
+            "quality workspace so file-existence checks resolve. Optional — "
+            "when missing, the legacy `<image href>` resolver may flag a "
+            "real image as missing."
+        ),
+    )
 
 
 class QualityCheckResponse(ToolResponse):
@@ -68,6 +77,20 @@ def check_svg_quality(req: QualityCheckRequest) -> QualityCheckResponse:
         svg_dir.mkdir()
         for slide in sorted(req.slides, key=lambda s: s.index):
             write_text(svg_dir, f"{slide.name}.svg", slide.svg)
+        # Drop image bytes in BOTH the svg directory (which is what the
+        # converter / export workspace uses) and a sibling `images/`
+        # directory (which is what the LLM tends to reference as
+        # `../images/<name>`). Without these, the legacy
+        # `_check_image_references` reports `Image file not found` even
+        # for images that were successfully acquired and bundled.
+        if req.images:
+            images_dir = ws / "images"
+            images_dir.mkdir(exist_ok=True)
+            for name, content in req.images.items():
+                if "/" in name or "\\" in name:
+                    continue
+                (svg_dir / name).write_bytes(content)
+                (images_dir / name).write_bytes(content)
 
         # Run per-file checks. The engine also has a directory-level checker,
         # but the per-file path is enough for the M2 contract.
