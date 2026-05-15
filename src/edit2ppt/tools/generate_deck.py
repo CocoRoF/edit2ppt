@@ -337,7 +337,7 @@ async def generate_deck(
         StageEvent(stage="checking_quality", progress=0.80, message_key="stages.checking_quality"),
     )
     page_results = {p.page_index: p for p in exec_batch.results}
-    quality_resp = _run_quality_check(page_results, req.canvas_format)
+    quality_resp = _run_quality_check(page_results, req.canvas_format, image_bytes_by_filename)
     cost = _merge_cost(cost, quality_resp.cost)
 
     # Per-page retry loop. Each round re-runs only the pages flagged as
@@ -395,7 +395,7 @@ async def generate_deck(
         for r in retry_batch.results:
             page_results[r.page_index] = r
 
-        quality_resp = _run_quality_check(page_results, req.canvas_format)
+        quality_resp = _run_quality_check(page_results, req.canvas_format, image_bytes_by_filename)
         cost = _merge_cost(cost, quality_resp.cost)
         retries_left -= 1
 
@@ -638,8 +638,16 @@ def _build_retry_hint(errors: list[QualityIssueLike]) -> str:
 def _run_quality_check(
     page_results: dict[int, "ExecutePageResponse"],
     canvas_format: CanvasFormat,
+    images: dict[str, bytes] | None = None,
 ) -> QualityCheckResponse:
-    """Run the SVG quality checker over the current page results."""
+    """Run the SVG quality checker over the current page results.
+
+    *images* is the same bundle the export stage uses (basename →
+    bytes). Forwarded so quality's workspace has the files it needs
+    to verify `<image href>` references — otherwise every cover_bg /
+    chapter divider gets reported as missing even though the export
+    will resolve them fine.
+    """
     from .execute import ExecutePageResponse  # for the forward ref
 
     quality_slides = [
@@ -651,7 +659,11 @@ def _run_quality_check(
         for p in sorted(page_results.values(), key=lambda r: r.page_index)
     ]
     return check_svg_quality(
-        QualityCheckRequest(slides=quality_slides, canvas_format=canvas_format)
+        QualityCheckRequest(
+            slides=quality_slides,
+            canvas_format=canvas_format,
+            images=images or {},
+        )
     )
 
 
