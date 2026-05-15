@@ -319,13 +319,33 @@ class SVGQualityChecker:
         if not re.match(r'0 0 \d+ \d+', viewbox):
             result['warnings'].append(f"Unusual viewBox format: {viewbox}")
 
-        # Check if it matches expected format
+        # Check if it matches expected format. We accept ANY viewBox
+        # whose aspect ratio matches the expected canvas — 16:9 decks
+        # can ship at 1280×720 (canonical), 1920×1080 (FHD),
+        # 1600×900, etc. and produce identical output once the
+        # executor-boundary normaliser wraps non-canonical viewBoxes
+        # in a scale-group. Tolerance is 1% on the aspect ratio.
         if expected_format and expected_format in CANVAS_FORMATS:
             expected_viewbox = CANVAS_FORMATS[expected_format]['viewbox']
-            if viewbox != expected_viewbox:
-                result['errors'].append(
-                    f"viewBox mismatch: expected '{expected_viewbox}', got '{viewbox}'"
-                )
+            try:
+                exp_parts = expected_viewbox.split()
+                exp_w, exp_h = float(exp_parts[2]), float(exp_parts[3])
+                got_parts = viewbox.split()
+                got_w, got_h = float(got_parts[2]), float(got_parts[3])
+                if got_w <= 0 or got_h <= 0:
+                    raise ValueError
+                exp_ratio = exp_w / exp_h
+                got_ratio = got_w / got_h
+                if abs(got_ratio - exp_ratio) > 0.01 * exp_ratio:
+                    result['errors'].append(
+                        f"viewBox aspect mismatch: expected ~{exp_ratio:.3f} "
+                        f"({expected_viewbox}), got {got_ratio:.3f} ('{viewbox}')"
+                    )
+            except (IndexError, ValueError):
+                if viewbox != expected_viewbox:
+                    result['errors'].append(
+                        f"viewBox mismatch: expected '{expected_viewbox}', got '{viewbox}'"
+                    )
 
     def _check_forbidden_elements(self, content: str, result: Dict):
         """Check forbidden elements (blocklist)"""

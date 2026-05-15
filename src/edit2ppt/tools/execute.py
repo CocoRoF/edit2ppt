@@ -109,6 +109,7 @@ async def execute_page(
     #     image + overlay rect but losing the mute is acceptable for
     #     keeping the build green).
     svg = _autoid_top_level_groups(svg)
+    svg = _normalise_viewbox_to_canonical(svg, getattr(req, "canvas_format", "ppt169"))
     svg = _promote_inline_styles(svg)
     svg = _quantize_colors_to_palette(svg, req.spec_lock)
     svg, image_basenames = _normalise_image_refs(svg, req.images)
@@ -433,6 +434,121 @@ def _quantize_colors_to_palette(svg: str, spec_lock: str) -> str:
         return raw
 
     return _RE_HEX.sub(_snap, svg)
+
+
+# Canonical canvas dimensions per format. The converter assumes
+# 1 SVG px = 9525 EMU, so any SVG whose viewBox doesn't match these
+# dimensions emits coordinates that fall off-canvas in the final
+# PPTX. We canonicalise at the Executor boundary by wrapping content
+# in a `<g transform="scale(...)">` whenever the model picked a
+# differently-sized 16:9 / 4:3 viewBox.
+_CANONICAL_VIEWBOX: dict[str, tuple[int, int]] = {
+    "ppt169": (1280, 720),
+    "ppt43": (1024, 768),
+    "xiaohongshu": (1242, 1660),
+    "wechat": (1080, 1080),
+    "story": (1080, 1920),
+}
+
+
+def _normalise_viewbox_to_canonical(svg: str, canvas_format: str) -> str:
+    """Rewrite the SVG so its viewBox matches the canonical canvas.
+
+    The user keeps emitting decks at 1920×1080 / 1600×900 / other
+    16:9-aspect viewBoxes (any popular video resolution). Our DrawingML
+    converter assumes 1 SVG px = 9525 EMU, so a non-canonical viewBox
+    pushes every pixel past the slide's actual canvas. We normalise
+    by wrapping the root's visual children in
+    `<g transform="scale(sx, sy)">` and rewriting `viewBox` /
+    `width` / `height` to canonical values.
+
+    Behaviour:
+      * Exact-match viewBox: pass-through.
+      * Aspect-matching viewBox (within 1 %): wrap + rewrite.
+      * Different aspect (e.g. 4:3 SVG into a 16:9 deck): pass-through
+        — the legacy quality check will surface it; we don't make
+        assumptions when the deck format itself is wrong.
+      * Missing viewBox: pass-through.
+      * Parse failure: pass-through.
+    """
+    canonical = _CANONICAL_VIEWBOX.get(canvas_format)
+    if canonical is None or not svg or "<svg" not in svg:
+        return svg
+    target_w, target_h = canonical
+    target_ratio = target_w / target_h
+
+    try:
+        from xml.etree import ElementTree as ET
+        root = ET.fromstring(svg)
+    except ET.ParseError:
+        return svg
+
+    vb = root.get("viewBox")
+    if not vb:
+        return svg
+    parts = vb.replace(",", " ").split()
+    if len(parts) != 4:
+        return svg
+    try:
+        vb_x, vb_y, vb_w, vb_h = (float(p) for p in parts)
+    except ValueError:
+        return svg
+    if vb_w <= 0 or vb_h <= 0:
+        return svg
+
+    # Already canonical — nothing to do.
+    if (vb_x, vb_y) == (0.0, 0.0) and abs(vb_w - target_w) < 0.5 and abs(vb_h - target_h) < 0.5:
+        return svg
+
+    # Different aspect ratio → leave alone. The converter's existing
+    # off-canvas detection will surface the mismatch, but rescaling
+    # would distort the deck.
+    actual_ratio = vb_w / vb_h
+    if abs(actual_ratio - target_ratio) > 0.01 * target_ratio:
+        return svg
+
+    sx = target_w / vb_w
+    sy = target_h / vb_h
+    # Move the original viewport origin into the transform too so the
+    # canonical viewBox starts at (0, 0).
+    tx = -vb_x * sx
+    ty = -vb_y * sy
+
+    # Build the wrapper. Use the SVG namespace so the parsed tree
+    # round-trips cleanly.
+    SVG_NS = "http://www.w3.org/2000/svg"
+    wrapper = ET.Element(f"{{{SVG_NS}}}g")
+    transform_pieces = []
+    if tx != 0 or ty != 0:
+        transform_pieces.append(f"translate({tx:g}, {ty:g})")
+    transform_pieces.append(f"scale({sx:g}, {sy:g})")
+    wrapper.set("transform", " ".join(transform_pieces))
+    wrapper.set("data-edit2ppt-viewbox-normalise", "1")
+
+    # Move every root child (except <defs> — references stay in place)
+    # under the wrapper. <defs> lives outside any transform so its
+    # ids remain at original coordinates, which is what `<use href>`
+    # consumers downstream expect.
+    children = list(root)
+    defs_children = [c for c in children if c.tag.split("}", 1)[-1] == "defs"]
+    visual_children = [c for c in children if c.tag.split("}", 1)[-1] != "defs"]
+    for c in children:
+        root.remove(c)
+    for d in defs_children:
+        root.append(d)
+    for v in visual_children:
+        wrapper.append(v)
+    root.append(wrapper)
+
+    # Rewrite the viewport.
+    root.set("viewBox", f"0 0 {target_w} {target_h}")
+    if root.get("width") is not None:
+        root.set("width", str(target_w))
+    if root.get("height") is not None:
+        root.set("height", str(target_h))
+
+    ET.register_namespace("", SVG_NS)
+    return ET.tostring(root, encoding="unicode")
 
 
 def _promote_inline_styles(svg: str) -> str:
