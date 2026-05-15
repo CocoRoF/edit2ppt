@@ -110,6 +110,24 @@ async def execute_page(
     #     keeping the build green).
     svg = _autoid_top_level_groups(svg)
     svg, image_basenames = _normalise_image_refs(svg, req.images)
+    # `canvas_format` is a deck-level attribute; ExecutePageRequest
+    # doesn't always carry it (batch tests pass per-page reqs only).
+    # Default to ppt169 — the layout repair pass also falls back to
+    # the same canvas, so this is effectively a no-op when missing.
+    svg, layout_violations = _repair_layout(svg, getattr(req, "canvas_format", "ppt169"))
+    for v in layout_violations:
+        warnings.append(
+            WarningEntry(
+                code=f"layout_{v.kind}",
+                message=_layout_violation_message(v),
+                detail={
+                    "element_path": v.element_path,
+                    "actual": v.actual,
+                    "expected": v.expected,
+                    "fix_applied": v.fix_applied,
+                },
+            )
+        )
 
     return ExecutePageResponse(
         page_index=req.page_index,
@@ -277,6 +295,52 @@ def _parse_output(text: str, warnings: list[WarningEntry]) -> tuple[str, str]:
     notes_match = _NOTES_BLOCK_RE.search(text)
     notes = notes_match.group(1).strip() if notes_match else ""
     return svg, notes
+
+
+# Canvas dimensions in SVG pixel units for each declared format. The
+# repair pass uses these to clamp off-canvas elements.
+_CANVAS_DIMS: dict[str, tuple[int, int]] = {
+    "ppt169": (1280, 720),
+    "ppt43": (1024, 768),
+    "xiaohongshu": (1242, 1660),
+    "wechat": (1080, 1080),
+    "story": (1080, 1920),
+}
+
+
+def _repair_layout(svg: str, canvas_format: str):
+    """Run the deterministic layout-repair pass.
+
+    Imported lazily so tests that don't exercise the LLM path (and
+    therefore don't need lxml-style SVG parsing) keep their light
+    dependency surface."""
+    from ..core.svg_to_pptx.layout_repair import LayoutViolation, repair_layout
+
+    canvas = _CANVAS_DIMS.get(canvas_format, _CANVAS_DIMS["ppt169"])
+    result = repair_layout(svg, canvas=canvas)
+    return result.repaired_svg, result.violations
+
+
+def _layout_violation_message(v) -> str:
+    """One-line human description for `WarningEntry.message`."""
+    if v.kind == "overlap":
+        ratio = v.actual.get("overlap_ratio", 0)
+        return (
+            f"두 요소가 {int(ratio * 100)}% 겹침; "
+            + ("자동으로 아래로 옮겼습니다." if v.fix_applied else "수정 못 함.")
+        )
+    if v.kind == "text_overflow_x":
+        required = v.actual.get("required_w")
+        actual = v.actual.get("box_w")
+        return (
+            f"텍스트가 박스 폭을 초과 (필요 {required}px / 실제 {actual:.0f}px); "
+            + ("박스 폭을 확장했습니다." if v.fix_applied else "박스 폭 그대로.")
+        )
+    if v.kind == "off_canvas":
+        return "요소가 캔버스 밖에 위치 — 안쪽으로 이동시켰습니다." if v.fix_applied else "요소가 캔버스 밖."
+    if v.kind == "empty_decoration":
+        return "빈 장식 요소를 제거했습니다."
+    return f"레이아웃 위반: {v.kind}"
 
 
 def _normalise_image_refs(svg: str, available: list) -> tuple[str, set[str]]:
