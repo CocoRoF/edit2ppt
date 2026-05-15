@@ -355,12 +355,28 @@ async def generate_deck(
         on_event,
         StageEvent(stage="executing_pages", progress=0.40, message_key="stages.executing_pages"),
     )
+
+    # Generate deterministic per-page layout briefs (P2.1). The
+    # Executor's user_message places each brief BEFORE the page
+    # outline so the LLM treats the box geometry as hard constraints
+    # — page-number / footer / chapter-label dimensions are stable
+    # across pages and across runs.
+    from ._layout_brief import build_layout_briefs, render_brief_yaml
+
+    layout_briefs = build_layout_briefs(
+        spec_lock=strat.spec_lock,
+        page_count=len(page_summaries),
+    )
+
     page_reqs: list[ExecutePageRequest] = [
         ExecutePageRequest(
             spec_lock=strat.spec_lock,
             page_index=i,
             page_summary=summary,
             images=images_by_page.get(i, []),
+            layout_brief_yaml=(
+                render_brief_yaml(layout_briefs[i]) if i < len(layout_briefs) else None
+            ),
             style=req.style,
             lang=req.lang,
             model=req.model,
@@ -485,6 +501,9 @@ async def generate_deck(
                     + _build_retry_hint(errors_by_page[i])
                 ),
                 images=images_by_page.get(i, []),
+                layout_brief_yaml=(
+                    render_brief_yaml(layout_briefs[i]) if i < len(layout_briefs) else None
+                ),
                 style=req.style,
                 lang=req.lang,
                 model=req.model,
