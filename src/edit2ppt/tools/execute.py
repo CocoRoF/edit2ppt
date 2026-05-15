@@ -109,6 +109,7 @@ async def execute_page(
     #     image + overlay rect but losing the mute is acceptable for
     #     keeping the build green).
     svg = _autoid_top_level_groups(svg)
+    svg = _promote_inline_styles(svg)
     svg, image_basenames = _normalise_image_refs(svg, req.images)
     # `canvas_format` is a deck-level attribute; ExecutePageRequest
     # doesn't always carry it (batch tests pass per-page reqs only).
@@ -341,6 +342,95 @@ def _layout_violation_message(v) -> str:
     if v.kind == "empty_decoration":
         return "빈 장식 요소를 제거했습니다."
     return f"레이아웃 위반: {v.kind}"
+
+
+def _promote_inline_styles(svg: str) -> str:
+    """Lift CSS declarations on ``style="..."`` into native SVG
+    attributes so the DrawingML converter sees them.
+
+    The Executor sometimes emits ``<text style="font-size:14px;
+    font-weight:700;color:#0a0">...</text>``. Our converter only reads
+    ``font-size`` / ``font-weight`` / ``fill`` as element attributes;
+    inline styles are silently ignored, so the run ends up rendered at
+    the default 16-px regular black. Promoting the declarations
+    upgrades whatever the model intended.
+
+    Promoted properties:
+      * font-size, font-weight, font-style, font-family
+      * fill, stroke, stroke-width, opacity, fill-opacity, stroke-opacity
+      * letter-spacing, text-anchor
+
+    Existing element attributes win — if the element already declared
+    ``font-size="20"`` and the inline style says ``font-size:14px``, the
+    explicit attribute is preserved (model intent is ambiguous; the
+    explicit attr is the safer pick).
+
+    Best effort: parse failures pass the SVG through unchanged.
+    """
+    if not svg or "style=" not in svg:
+        return svg
+    try:
+        from xml.etree import ElementTree as ET
+        root = ET.fromstring(svg)
+    except ET.ParseError:
+        return svg
+
+    promotable = {
+        "font-size",
+        "font-weight",
+        "font-style",
+        "font-family",
+        "fill",
+        "stroke",
+        "stroke-width",
+        "opacity",
+        "fill-opacity",
+        "stroke-opacity",
+        "letter-spacing",
+        "text-anchor",
+    }
+
+    for elem in root.iter():
+        style = elem.get("style")
+        if not style:
+            continue
+        # CSS declarations are `key:value` separated by `;`. Tolerant
+        # of trailing semicolons, whitespace, and `key: value` spacing.
+        declarations: list[tuple[str, str]] = []
+        keep: list[str] = []
+        for decl in style.split(";"):
+            decl = decl.strip()
+            if not decl or ":" not in decl:
+                if decl:
+                    keep.append(decl)
+                continue
+            key, _, value = decl.partition(":")
+            key = key.strip().lower()
+            value = value.strip()
+            if not key or not value:
+                continue
+            # Drop the `px` suffix off numeric font-size — SVG attr
+            # is unit-less by convention.
+            if key == "font-size" and value.lower().endswith("px"):
+                value = value[:-2].strip()
+            if key in promotable:
+                declarations.append((key, value))
+            else:
+                keep.append(f"{key}:{value}")
+
+        # Promote only when the element doesn't already declare the attr.
+        for key, value in declarations:
+            if elem.get(key) is None:
+                elem.set(key, value)
+
+        # Re-serialise the remaining style or drop it entirely.
+        if keep:
+            elem.set("style", "; ".join(keep))
+        elif "style" in elem.attrib:
+            del elem.attrib["style"]
+
+    ET.register_namespace("", "http://www.w3.org/2000/svg")
+    return ET.tostring(root, encoding="unicode")
 
 
 def _normalise_image_refs(svg: str, available: list) -> tuple[str, set[str]]:
