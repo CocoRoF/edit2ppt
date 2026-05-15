@@ -227,6 +227,50 @@ async def generate_deck(
         strat.spec_lock,
         raw_output=strat.raw_output,
     )
+
+    # Defence against template-reference noise. deck_4.pptx production
+    # case: design_spec §VII listed chart-template references like
+    # `- P03 · BAR CHART` that the page regex picked up as extra
+    # pages, producing a 15-slide deck whose first 5 slides were
+    # template descriptions instead of content. Two filters:
+    #   1. Keep only the contiguous run starting at P01 (the first
+    #      time the regex hits "1" as an index). Anything before is
+    #      reference content; anything after a gap is noise.
+    #   2. Truncate to the page count spec_lock declared, when it
+    #      did. The Strategist's `project.pages_total: N` is the
+    #      definitive contract — Executor SHOULD NOT exceed it.
+    _before = len(page_summaries)
+    page_summaries = _consecutive_run_starting_at_one(page_summaries)
+    if len(page_summaries) != _before:
+        warnings.append(
+            WarningEntry(
+                code="page_plan_trimmed_to_consecutive_run",
+                message=(
+                    f"design_spec 에서 {_before}개 후보 페이지가 검출되었으나 "
+                    f"P01 로 시작하는 연속 구간 {len(page_summaries)}개만 deck 에 포함됩니다. "
+                    "나머지는 차트/템플릿 참조로 판단되어 제외."
+                ),
+                detail={"detected": _before, "kept": len(page_summaries)},
+            )
+        )
+
+    _expected = _expected_page_count(strat.spec_lock)
+    if _expected is not None and len(page_summaries) > _expected:
+        warnings.append(
+            WarningEntry(
+                code="page_plan_truncated_to_spec_lock",
+                message=(
+                    f"spec_lock 의 pages_total={_expected} 보다 많은 "
+                    f"{len(page_summaries)}개 페이지가 검출되어 {_expected}개로 잘랐습니다."
+                ),
+                detail={
+                    "spec_lock_pages_total": _expected,
+                    "detected": len(page_summaries),
+                },
+            )
+        )
+        page_summaries = page_summaries[:_expected]
+
     if not page_summaries:
         # Surface enough of the Strategist response to actually diagnose
         # the failure. Cap each section at ~4 KB to keep logs readable.
@@ -758,9 +802,102 @@ _PAGE_HEADING_RE = re.compile(
 _OUTLINE_SECTION_RE = re.compile(
     r"^#{1,6}\s+(?:"
     r"(?:[IVX]+|9|IX)\s*[\.\):]\s*)?"
-    r"(?:Content Outline|콘텐츠 아웃라인|Outline|아웃라인|目次|アウトライン|大纲|大綱|페이지 아웃라인|페이지\s*개요|Pages?\s+Outline)",
+    r"(?:Content Outline|콘텐츠 아웃라인|콘텐츠 개요|콘텐츠 구성"
+    r"|Outline|아웃라인|目次|アウトライン|大纲|大綱"
+    r"|페이지 아웃라인|페이지\s*개요|페이지\s*구성|페이지\s*outline"
+    r"|슬라이드\s*아웃라인|슬라이드\s*개요|슬라이드\s*구성|슬라이드\s*outline"
+    r"|내용\s*개요|내용\s*구성|Pages?\s+Outline)",
     re.MULTILINE | re.IGNORECASE,
 )
+
+
+# How many pages does spec_lock say the deck has? The Strategist's
+# reference template recommends an explicit `pages_total: N` /
+# `page_count: N` row inside the `project:` block. When that's
+# present we trust it as the upper bound — anything `_split_page_plan`
+# returns above this count is template-reference noise.
+_PAGE_TOTAL_RE = re.compile(
+    r"(?:pages?_total|pages?_count|page_count|total_pages|deck_pages|slide_count)"
+    r"\s*[:=]\s*(\d{1,3})",
+    re.IGNORECASE,
+)
+
+
+def _expected_page_count(spec_lock: str) -> int | None:
+    """Extract the declared page count from spec_lock when present.
+
+    The Strategist puts ``pages_total: N`` in the project header of
+    the spec_lock; we read that as the deck size. Returns None when
+    spec_lock doesn't declare one.
+    """
+    if not spec_lock:
+        return None
+    m = _PAGE_TOTAL_RE.search(spec_lock)
+    if not m:
+        return None
+    try:
+        n = int(m.group(1))
+    except ValueError:
+        return None
+    return n if 1 <= n <= 100 else None
+
+
+_PAGE_ID_RE = re.compile(r"P0*([0-9]{1,3})\b", re.IGNORECASE)
+
+
+def _consecutive_run_starting_at_one(summaries: list[str]) -> list[str]:
+    """Filter ``summaries`` to the contiguous run of pages whose
+    extracted P-id starts at 1 (or 01).
+
+    Production failure (deck_4.pptx): Strategist's design_spec carried
+    chart-template references like ``- P03 · BAR CHART`` in §VII before
+    the real §IX outline. The generic P-id regex picked them up as
+    extra pages, so the deck shipped 15 slides where 10 were real and
+    5 were template descriptions. The fix is to find the first chunk
+    that starts at index 1 and use only that. Summaries without an
+    extractable P-id (cover pages titled by name) pass through as long
+    as they're inside the run.
+    """
+    if not summaries:
+        return summaries
+
+    # Build a per-summary index extracted from the first P-id mention.
+    indexes: list[int | None] = []
+    for s in summaries:
+        m = _PAGE_ID_RE.search(s)
+        indexes.append(int(m.group(1)) if m else None)
+
+    # Locate the first summary whose extracted index is 1.
+    start = None
+    for i, idx in enumerate(indexes):
+        if idx == 1:
+            start = i
+            break
+
+    if start is None:
+        # No P01 anchor — fall back to the original list. The deck
+        # might use a different numbering scheme (just `01.` / `Slide 1`).
+        return summaries
+
+    # From the anchor, accept summaries while they're either a
+    # successor index or unnumbered (titles).
+    out = [summaries[start]]
+    expected_next = 2
+    for s, idx in zip(summaries[start + 1 :], indexes[start + 1 :]):
+        if idx is None:
+            out.append(s)
+            continue
+        if idx == expected_next:
+            out.append(s)
+            expected_next += 1
+            continue
+        if idx == expected_next - 1:
+            # Same index seen twice — the regex matched twice on one
+            # page (e.g. P05 title plus P05 anchor reference). Tolerate.
+            continue
+        # Index jump → end of the run.
+        break
+    return out
 
 
 def _split_page_plan(
