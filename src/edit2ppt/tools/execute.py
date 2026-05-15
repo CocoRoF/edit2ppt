@@ -110,6 +110,7 @@ async def execute_page(
     #     keeping the build green).
     svg = _autoid_top_level_groups(svg)
     svg = _promote_inline_styles(svg)
+    svg = _quantize_colors_to_palette(svg, req.spec_lock)
     svg, image_basenames = _normalise_image_refs(svg, req.images)
     # `canvas_format` is a deck-level attribute; ExecutePageRequest
     # doesn't always carry it (batch tests pass per-page reqs only).
@@ -342,6 +343,96 @@ def _layout_violation_message(v) -> str:
     if v.kind == "empty_decoration":
         return "빈 장식 요소를 제거했습니다."
     return f"레이아웃 위반: {v.kind}"
+
+
+_RE_HEX = re.compile(r"#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b")
+
+
+def _hex_to_rgb(hex_str: str) -> tuple[int, int, int] | None:
+    """Parse `#abc` or `#aabbcc` → (r, g, b). Returns None if malformed."""
+    h = hex_str.lstrip("#")
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    if len(h) != 6:
+        return None
+    try:
+        return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    except ValueError:
+        return None
+
+
+def _palette_from_spec_lock(spec_lock: str) -> list[tuple[str, tuple[int, int, int]]]:
+    """Pull every `#RRGGBB` literal out of the spec_lock as a palette.
+
+    Tolerant of both YAML and markdown forms. Returns an ordered list
+    of (hex_uppercase, rgb_tuple). Duplicates are removed but order is
+    preserved so the snap-to-nearest deterministically prefers earlier
+    declarations (Strategist's first palette colors are the most
+    intentional).
+    """
+    if not spec_lock:
+        return []
+    seen: dict[str, tuple[int, int, int]] = {}
+    ordered: list[tuple[str, tuple[int, int, int]]] = []
+    for m in _RE_HEX.finditer(spec_lock):
+        rgb = _hex_to_rgb(m.group(0))
+        if rgb is None:
+            continue
+        hex_up = "#{:02X}{:02X}{:02X}".format(*rgb)
+        if hex_up not in seen:
+            seen[hex_up] = rgb
+            ordered.append((hex_up, rgb))
+    return ordered
+
+
+def _quantize_colors_to_palette(svg: str, spec_lock: str) -> str:
+    """Snap every hex color in *svg* to the nearest spec_lock palette
+    color when the RGB distance is small.
+
+    The LLM routinely emits slight variants of palette colors (different
+    alpha layering, hand-tweaked shadows). Each variant is reported by
+    the quality stage as palette bloat. Snapping them to the declared
+    palette restores the Strategist's typography discipline without
+    requiring a retry.
+
+    Snap policy:
+      * Compute squared Euclidean RGB distance from the SVG color to
+        every palette entry.
+      * If the closest palette color is within 30 RGB units (about
+        9% perceptual similarity), snap.
+      * Otherwise leave the original — the model invented a genuinely
+        different color and the operator should see it.
+
+    Returns the SVG unchanged when there's no palette to snap to.
+    """
+    palette = _palette_from_spec_lock(spec_lock)
+    if not palette or not svg or "#" not in svg:
+        return svg
+
+    # Squared distance threshold — 30 RGB units per channel → r² = 30² * 3
+    THRESHOLD_SQ = 30 * 30 * 3
+    cache: dict[str, str] = {}
+
+    def _snap(match: "re.Match[str]") -> str:
+        raw = match.group(0)
+        if raw in cache:
+            return cache[raw]
+        rgb = _hex_to_rgb(raw)
+        if rgb is None:
+            cache[raw] = raw
+            return raw
+        best: tuple[str, int] | None = None
+        for p_hex, p_rgb in palette:
+            d = (rgb[0] - p_rgb[0]) ** 2 + (rgb[1] - p_rgb[1]) ** 2 + (rgb[2] - p_rgb[2]) ** 2
+            if best is None or d < best[1]:
+                best = (p_hex, d)
+        if best is not None and best[1] <= THRESHOLD_SQ:
+            cache[raw] = best[0]
+            return best[0]
+        cache[raw] = raw
+        return raw
+
+    return _RE_HEX.sub(_snap, svg)
 
 
 def _promote_inline_styles(svg: str) -> str:
