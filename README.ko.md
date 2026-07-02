@@ -14,8 +14,27 @@ IDE 의 LLM 이 직접 구동하는 모델이 아니라, **MCP 호환 Agent (Cla
 
 ppt-master 와의 두 가지 결정적 차이:
 
-1. **로컬 설치형이 아닌 서버형.** 사용자 머신에 아무것도 설치하지 않습니다. 파일
-   입출력은 HTTPS, 저장소는 S3 호환, 작업은 워커에서 비동기 처리.
+**네 가지 사용 방식** (같은 엔진, 표면만 선택):
+
+```bash
+pip install edit2ppt              # 라이브러리 + 에이전트 도구 + 로컬 MCP
+pip install "edit2ppt[server]"    # + 호스팅 서비스
+```
+
+1. **Python 라이브러리** — `from edit2ppt import generate_pptx, edit_pptx,
+   preview_pptx, set_pptx_text, analyze_pptx`. 파일 경로 기반, 무인프라.
+   BYOK는 `api_key=` 또는 `ANTHROPIC_API_KEY`; preview/set_text/analyze는 키 불필요.
+2. **에이전트 도구** — `from edit2ppt.agent_tools import ANTHROPIC_TOOLS,
+   run_tool`. Anthropic tool-use에 바로 넣는 스키마 + 디스패처.
+3. **로컬 MCP 서버** — `edit2ppt-mcp` (stdio). Claude Desktop/Code/Cursor 설정에
+   command 한 줄이면 끝. DB·스토리지·서버 없음.
+4. **호스팅 서비스** — `edit2ppt serve` (REST + SSE 잡 + 호스티드 MCP).
+   [웹 스튜디오](https://hrletsgo.me/edit2ppt)가 이걸로 돌아갑니다.
+
+ppt-master 와의 두 가지 결정적 차이:
+
+1. **모든 계층이 에이전트 네이티브.** 동일한 무상태 도구 함수가 라이브러리·
+   함수호출 스키마·두 MCP 서버·호스팅 API를 모두 구동.
 2. **한국어 네이티브.** Hangul 텍스트 폭 계산, 한국어 폰트 스택, OOXML
    `lang="ko-KR"`, 이중 언어 에러 메시지, 한국식 레이아웃 템플릿이 기본 탑재.
 

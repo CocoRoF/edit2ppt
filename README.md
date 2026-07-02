@@ -6,15 +6,66 @@
 
 ---
 
-`edit2ppt` is a hosted PPT generation engine. Instead of installing a local skill
-and asking your IDE's LLM to drive it, you point any MCP-capable agent at our
-server URL. The agent gains a small set of tools (`generate_deck`,
-`upload_source`, `list_templates`) and produces real, editable PPTX files.
+`edit2ppt` is an AI-agent-native PPTX engine: generate decks from a one-line
+intent, chat-edit existing files slide by slide, render previews, and patch
+text deterministically — all producing real, natively editable PowerPoint.
+
+**Use it four ways** (same engine, pick your surface):
+
+```bash
+pip install edit2ppt              # library + agent tools + local MCP
+pip install "edit2ppt[server]"    # + the hosted multi-tenant service
+```
+
+### 1 · Python library
+
+```python
+from edit2ppt import generate_pptx, edit_pptx, preview_pptx, set_pptx_text, analyze_pptx
+
+generate_pptx("Q3 영업 결과 임원 보고", output="deck.pptx")          # intent → deck
+r = edit_pptx("deck.pptx", "3번 슬라이드 제목을 'Q3 요약'으로 바꿔줘")  # one chat turn
+svgs = preview_pptx(r.path)                                          # slides → SVG
+info = analyze_pptx(r.path)                                          # text outline + addresses
+set_pptx_text(r.path, [{"slide": 0, "shape_id": 2, "para": 0,
+                        "new_text": "새 제목"}])                      # no-LLM, instant
+```
+
+BYOK: `api_key=...` or `ANTHROPIC_API_KEY`. `preview/set_text/analyze` need no key.
+
+### 2 · Agent tools (function calling)
+
+```python
+from edit2ppt.agent_tools import ANTHROPIC_TOOLS, run_tool
+
+msg = client.messages.create(model="claude-opus-4-7", tools=ANTHROPIC_TOOLS, ...)
+for block in msg.content:
+    if block.type == "tool_use":
+        result = run_tool(block.name, block.input)
+```
+
+### 3 · Local MCP server (zero infra)
+
+```jsonc
+// Claude Desktop / Claude Code / Cursor
+{ "mcpServers": { "edit2ppt": {
+    "command": "edit2ppt-mcp",
+    "env": { "ANTHROPIC_API_KEY": "sk-ant-..." }
+} } }
+```
+
+Five tools over local files: `generate_pptx`, `edit_pptx`, `preview_pptx`,
+`set_pptx_text`, `analyze_pptx`. No database, no storage, no server.
+
+### 4 · Hosted service
+
+`edit2ppt serve` runs the FastAPI service (REST + SSE jobs + hosted MCP) that
+powers the [web studio](https://hrletsgo.me/edit2ppt) — multi-tenant assets,
+job queue, S3-compatible storage.
 
 Two things make it different from ppt-master:
 
-1. **Server-side, not local.** Nothing to install on the user side. File I/O is
-   over HTTPS; storage is S3-compatible; jobs run in workers.
+1. **Agent-native at every layer.** The same stateless tool functions back the
+   library, the function-calling schemas, both MCP servers and the hosted API.
 2. **Korean-native.** Hangul text width, Korean fonts, OOXML `lang="ko-KR"`,
    bilingual error messages, and Korean layout templates ship out of the box.
 

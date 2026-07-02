@@ -1,7 +1,7 @@
 [project]
 name = "edit2ppt"
-version = "0.4.1"
-description = "AI-agent-native PPT generation server with Korean language support. Forked from ppt-master (MIT)."
+version = "0.5.0"
+description = "AI-agent-native PPTX engine: generate, chat-edit and preview decks as a Python library, agent tool set, MCP server or hosted service. Korean-first. Forked from ppt-master (MIT)."
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
@@ -15,30 +15,14 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 
+# Core = everything the LIBRARY / agent-tools / local MCP surfaces need:
+# the tool layer (generate/edit/preview/text-edit) with zero server infra.
+# `pip install edit2ppt` stays lean; the hosted service adds `[server]`.
 dependencies = [
-    # Web framework
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.32.0",
     "pydantic>=2.9.0",
     "pydantic-settings>=2.6.0",
-    "python-multipart>=0.0.17",
-    "sse-starlette>=2.1.3",
-    # i18n
+    # i18n + spec_lock / edit-plan parsing
     "pyyaml>=6.0",
-    # Storage
-    "aioboto3>=13.2.0",
-    "botocore>=1.35.0",
-    # Database. Standalone mode (the default) uses SQLite via aiosqlite;
-    # `EDIT2PPT_DATABASE_URL=postgresql+asyncpg://...` switches to Postgres.
-    "sqlalchemy[asyncio]>=2.0.36",
-    "aiosqlite>=0.20.0",
-    "asyncpg>=0.30.0",
-    "alembic>=1.14.0",
-    # Job queue
-    "arq>=0.26.1",
-    "redis>=5.2.0",
-    # Logging
-    "structlog>=24.4.0",
     # Core engine dependencies (from ppt-master)
     "python-pptx>=0.6.21",
     "PyMuPDF>=1.23.0",
@@ -56,12 +40,30 @@ dependencies = [
     "edge-tts>=7.2.8",
     # LLM
     "anthropic>=0.40.0",
-    # MCP (Model Context Protocol)
+    # MCP (Model Context Protocol) — powers the zero-infra `edit2ppt-mcp`
     "mcp>=1.0.0",
 ]
 
 [project.optional-dependencies]
+# Hosted multi-tenant service: FastAPI + DB + object storage + job queue.
+server = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "python-multipart>=0.0.17",
+    "sse-starlette>=2.1.3",
+    "aioboto3>=13.2.0",
+    "botocore>=1.35.0",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "aiosqlite>=0.20.0",
+    "asyncpg>=0.30.0",
+    "alembic>=1.14.0",
+    "arq>=0.26.1",
+    "redis>=5.2.0",
+    "structlog>=24.4.0",
+]
 dev = [
+    # The test suite covers the hosted service too.
+    "edit2ppt[server]",
     "pytest>=8.3.3",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
@@ -87,6 +89,9 @@ Upstream = "https://github.com/hugohe3/ppt-master"
 
 [project.scripts]
 edit2ppt = "edit2ppt.cli:main"
+# Zero-infra stdio MCP server over local files (Claude Desktop / Code / Cursor):
+#   uvx --from edit2ppt edit2ppt-mcp   or   pip install edit2ppt && edit2ppt-mcp
+edit2ppt-mcp = "edit2ppt.mcp.local_main:main"
 
 [build-system]
 requires = ["hatchling"]
