@@ -148,12 +148,19 @@ def convert_txbody(
 
     bottom_y = inner_y + inner_h
     text_blocks: list[str] = []
-    for para, lines, height in zip(paragraphs, para_lines, para_heights):
+    # `_parse_paragraphs` is 1:1 with <a:p> elements, so enumerate() yields
+    # the OOXML paragraph index that /v1/text-edits addresses.
+    for para_index, (para, lines, height) in enumerate(
+        zip(paragraphs, para_lines, para_heights)
+    ):
         cursor_y += para.space_before_px
         visible_lines = _clip_lines_to_bottom(para, lines, cursor_y, bottom_y)
         if visible_lines:
             text_blocks.append(
-                _emit_paragraph(para, visible_lines, inner_x, inner_w, cursor_y)
+                _emit_paragraph(
+                    para, visible_lines, inner_x, inner_w, cursor_y,
+                    para_index=para_index,
+                )
             )
         cursor_y += height + para.space_after_px
         if cursor_y >= bottom_y:
@@ -879,6 +886,7 @@ def _emit_paragraph(
     lines: list[list[TextRun]],
     inner_x: float, inner_w: float,
     top_y: float,
+    para_index: int | None = None,
 ) -> str:
     """Render a paragraph (already split into lines) as one <text> element.
 
@@ -932,7 +940,10 @@ def _emit_paragraph(
                 )
 
     base_attrs = _text_base_attrs(first_run, anchor_x, first_baseline, text_anchor)
-    return f"<text{base_attrs}>{''.join(spans)}</text>"
+    # `para_index` maps this <text> back to its OOXML <a:p> so the studio's
+    # inline text editor can address the exact paragraph (see /v1/text-edits).
+    para_attr = f' data-e2p-para="{para_index}"' if para_index is not None else ""
+    return f"<text{para_attr}{base_attrs}>{''.join(spans)}</text>"
 
 
 def _text_base_attrs(run: TextRun | None, x: float, y: float,

@@ -421,6 +421,7 @@ def build_mcp_server(context: MCPContext | None = None) -> FastMCP:
         instruction: str,
         anthropic_api_key: str,
         chat_history: list[dict] | None = None,
+        source_asset_ids: list[str] | None = None,
         lang: str = "ko-KR",
         model: str = "claude-opus-4-7",
         output_basename: str = "deck",
@@ -444,6 +445,23 @@ def build_mcp_server(context: MCPContext | None = None) -> FastMCP:
             )
             pptx_bytes = await scope.storage.get_bytes(asset.storage_key)
 
+            source_reqs: list[ConvertRequest] = []
+            for sid in source_asset_ids or []:
+                try:
+                    src_uuid = uuid.UUID(sid)
+                except ValueError as exc:
+                    raise AssetError(f"source_asset_ids must be valid UUIDs: {exc}") from exc
+                src_asset = await get_asset(
+                    session=scope.session, tenant=scope.tenant, asset_id=src_uuid
+                )
+                source_reqs.append(
+                    ConvertRequest(
+                        source_type=_infer_source_type(src_asset.mime_type),
+                        content=await scope.storage.get_bytes(src_asset.storage_key),
+                        original_filename=src_asset.original_filename,
+                    )
+                )
+
             async def on_event(event: StageEvent) -> None:
                 if mcp_ctx is None:
                     return
@@ -458,6 +476,7 @@ def build_mcp_server(context: MCPContext | None = None) -> FastMCP:
                 EditDeckRequest(
                     pptx=pptx_bytes,
                     instruction=instruction,
+                    sources=source_reqs,
                     chat_history=[
                         ChatTurn(role=t["role"], content=str(t.get("content", "")))
                         for t in (chat_history or [])

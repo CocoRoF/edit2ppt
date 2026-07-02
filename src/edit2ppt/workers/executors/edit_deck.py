@@ -19,8 +19,9 @@ from ...db.models import Asset, AssetKind, JobEventType, JobKind, JobStatus
 from ...services.assets import upload_asset
 from ...services.jobs import record_event
 from ...storage import get_default_storage
-from ...tools import StageEvent
+from ...tools import ConvertRequest, StageEvent
 from ...tools.edit_deck import ChatTurn, EditDeckRequest, edit_deck
+from .generate_deck import _infer_source_type
 from .registry import ExecutionContext, register
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,29 @@ async def run_edit_deck(ctx: ExecutionContext) -> None:
         raise RuntimeError(f"deck asset {pptx_asset_id} not found for tenant {job.tenant_id}")
     pptx_bytes = await storage.get_bytes(asset.storage_key)
 
+    # Reference documents attached to this turn.
+    convert_reqs: list[ConvertRequest] = []
+    for src_id_str in params.get("source_asset_ids", []):
+        src_id = uuid.UUID(src_id_str)
+        src_asset = (
+            await session.execute(
+                select(Asset).where(
+                    Asset.id == src_id, Asset.tenant_id == job.tenant_id
+                )
+            )
+        ).scalar_one_or_none()
+        if src_asset is None:
+            raise RuntimeError(
+                f"source asset {src_id} not found for tenant {job.tenant_id}"
+            )
+        convert_reqs.append(
+            ConvertRequest(
+                source_type=_infer_source_type(src_asset.mime_type),
+                content=await storage.get_bytes(src_asset.storage_key),
+                original_filename=src_asset.original_filename,
+            )
+        )
+
     async def on_event(event: StageEvent) -> None:
         await record_event(
             session=session,
@@ -77,6 +101,7 @@ async def run_edit_deck(ctx: ExecutionContext) -> None:
         EditDeckRequest(
             pptx=pptx_bytes,
             instruction=instruction,
+            sources=convert_reqs,
             chat_history=[
                 ChatTurn(role=t["role"], content=str(t.get("content", "")))
                 for t in chat_history
