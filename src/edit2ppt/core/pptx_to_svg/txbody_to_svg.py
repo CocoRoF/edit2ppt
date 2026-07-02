@@ -942,7 +942,14 @@ def _emit_paragraph(
     base_attrs = _text_base_attrs(first_run, anchor_x, first_baseline, text_anchor)
     # `para_index` maps this <text> back to its OOXML <a:p> so the studio's
     # inline text editor can address the exact paragraph (see /v1/text-edits).
-    para_attr = f' data-e2p-para="{para_index}"' if para_index is not None else ""
+    # `data-e2p-text` carries the paragraph's SOURCE text (concatenated run
+    # texts — no bullet prefix, no wrap artifacts): the editor prefill and
+    # the optimistic-concurrency old_text both need the OOXML-exact string,
+    # which the rendered tspans (wrapped lines + bullets) no longer are.
+    para_attr = ""
+    if para_index is not None:
+        source_text = _xml_escape("".join(r.text for r in para.runs))
+        para_attr = f' data-e2p-para="{para_index}" data-e2p-text="{source_text}"'
     return f"<text{para_attr}{base_attrs}>{''.join(spans)}</text>"
 
 

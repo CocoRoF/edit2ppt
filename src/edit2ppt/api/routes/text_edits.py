@@ -40,6 +40,9 @@ class TextEditBody(BaseModel):
     para: int = Field(..., ge=0)
     new_text: str
     old_text: str | None = None
+    # Table-cell addressing (both set = edit table.cell(row, col)).
+    row: int | None = Field(default=None, ge=0)
+    col: int | None = Field(default=None, ge=0)
 
 
 class TextEditsBody(BaseModel):

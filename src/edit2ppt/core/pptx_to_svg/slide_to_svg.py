@@ -890,12 +890,16 @@ def _wrap_shape_group(inner: str, node: ShapeNode, ctx: AssemblyContext,
         attrs.append(f'data-name="{_xml_escape(node.name)}"')
     if node.placeholder is not None and node.placeholder.type:
         attrs.append(f'data-ph-type="{_xml_escape(node.placeholder.type)}"')
-    # Editing hook: slide-origin plain shapes (p:sp) expose their OOXML
-    # shape id so the studio canvas can map a clicked <text> back to the
-    # source run (POST /v1/text-edits). Inherited master/layout shapes
-    # (non-empty prefix) and tables/graphicFrames are not editable this way.
-    if node.spid and not ctx.group_id_prefix and node.kind == "sp":
-        attrs.append(f'data-e2p-shape="{node.spid}"')
+    # Editing hooks: slide-origin shapes expose their OOXML shape id so the
+    # studio canvas can map a clicked <text> back to the source run
+    # (POST /v1/text-edits). Inherited master/layout shapes (non-empty
+    # prefix) stay untagged. Tables use a distinct attribute — their cells
+    # additionally carry data-e2p-cell="row,col" (see tbl_to_svg).
+    if node.spid and not ctx.group_id_prefix:
+        if node.kind == "sp":
+            attrs.append(f'data-e2p-shape="{node.spid}"')
+        elif node.kind == "graphicFrame":
+            attrs.append(f'data-e2p-table="{node.spid}"')
     if transform:
         attrs.append(f'transform="{transform}"')
     return f"<g {' '.join(attrs)}>\n{inner}\n</g>"

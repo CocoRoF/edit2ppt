@@ -67,7 +67,10 @@ class EditDeckRequest(ToolRequest):
     lang: LangCode = DEFAULT_LANG
     model: str = DEFAULT_MODEL
     anthropic_api_key: str = Field(..., description="BYOK; never persisted.")
-    max_operations: int = Field(default=8, ge=1, le=20)
+    # "제목 전부 바꿔줘" on a 20-slide deck legitimately needs ~20 ops; the
+    # cap only guards against runaway plans. Truncation is reported in the
+    # chat reply so the user knows to re-run for the remainder.
+    max_operations: int = Field(default=20, ge=1, le=40)
 
 
 class EditDeckResponse(ToolResponse):
@@ -124,15 +127,55 @@ async def edit_deck(
     result = await client.complete(
         system_prompt=planner_system,
         user_message=planner_user,
-        max_output_tokens=4096,
+        max_output_tokens=16384,
         cache_system=True,
         model=req.model,
     )
     cost = _merge_cost(cost, _cost_from_usage(result.usage))
-    reply, operations = _parse_plan(result.text, warnings)
+    reply, operations, plan_missing = _parse_plan(result.text, warnings)
+
+    # The model occasionally answers conversationally ("...하겠습니다") and
+    # forgets the edit_plan block entirely. Without a retry the user sees a
+    # promise followed by zero changes — retry once with a hard reminder.
+    if plan_missing:
+        retry_result = await client.complete(
+            system_prompt=planner_system,
+            user_message=(
+                planner_user
+                + "\n\n# REMINDER\nYour previous answer was missing the "
+                "```edit_plan fenced block. Respond again following the "
+                "output format EXACTLY: a ```reply block, then a "
+                "```edit_plan block (operations: [] only if truly no "
+                "change is needed)."
+            ),
+            max_output_tokens=16384,
+            cache_system=True,
+            model=req.model,
+        )
+        cost = _merge_cost(cost, _cost_from_usage(retry_result.usage))
+        reply, operations, plan_missing = _parse_plan(retry_result.text, warnings)
+        if plan_missing:
+            # Be honest in the chat instead of promising changes that never
+            # happened (production case: "레이아웃 재구성하겠습니다" + no-op).
+            reply = (
+                reply.rstrip()
+                + "\n\n⚠️ 편집 계획 생성에 실패해 변경이 적용되지 않았습니다. "
+                "요청을 조금 더 구체적으로 나눠서 다시 보내주세요."
+            )
+
     operations = _validate_operations(
         operations, page_count=len(slide_svgs), cap=req.max_operations, warnings=warnings
     )
+    truncated = next(
+        (w for w in warnings if w.code == "edit_plan_truncated"), None
+    )
+    if truncated is not None and truncated.detail:
+        reply = (
+            reply.rstrip()
+            + f"\n\nℹ️ 계획된 작업 {truncated.detail['emitted']}개 중 상한에 따라 "
+            f"앞 {truncated.detail['cap']}개만 이번 턴에 적용합니다. 나머지는 "
+            "같은 요청을 한 번 더 보내면 이어서 처리됩니다."
+        )
 
     if not operations:
         await _emit(on_event, StageEvent(stage="done", progress=1.0, message_key="stages.done"))
@@ -351,10 +394,24 @@ def _extract_slide_text(svg: str, limit: int = 280) -> str:
 
 def _extract_block(text: str, label: str) -> str | None:
     match = re.search(rf"```{label}\s*\n(.*?)```", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    # Tolerate an unclosed fence: long plans can hit the output-token limit
+    # mid-block, losing the trailing ``` — take everything to EOF and let
+    # YAML parsing decide how much of it survives.
+    match = re.search(rf"```{label}\s*\n(.*)$", text, re.DOTALL)
     return match.group(1).strip() if match else None
 
 
-def _parse_plan(text: str, warnings: list[WarningEntry]) -> tuple[str, list[dict]]:
+def _parse_plan(
+    text: str, warnings: list[WarningEntry]
+) -> tuple[str, list[dict], bool]:
+    """Return ``(reply, operations, plan_missing)``.
+
+    ``plan_missing`` is True only when the edit_plan block is absent or
+    unparseable — an explicit ``operations: []`` is a valid "no changes
+    needed" answer, not a failure.
+    """
     reply = _extract_block(text, "reply") or ""
     plan_raw = _extract_block(text, "edit_plan")
     if not reply:
@@ -365,22 +422,45 @@ def _parse_plan(text: str, warnings: list[WarningEntry]) -> tuple[str, list[dict
         warnings.append(
             WarningEntry(
                 code="edit_plan_block_missing",
-                message="Planner output had no edit_plan block; treating as no-op turn.",
+                message="Planner output had no edit_plan block.",
             )
         )
-        return reply, []
+        return reply, [], True
     try:
         data = yaml.safe_load(plan_raw) or {}
-    except yaml.YAMLError as exc:
+    except yaml.YAMLError:
+        # Unclosed-fence recovery can leave a truncated final entry; drop
+        # lines from the tail until the YAML parses (keeps complete ops).
+        data = _parse_yaml_prefix(plan_raw)
+        if data is None:
+            warnings.append(
+                WarningEntry(
+                    code="edit_plan_yaml_invalid",
+                    message="Planner YAML failed to parse.",
+                )
+            )
+            return reply, [], True
         warnings.append(
             WarningEntry(
-                code="edit_plan_yaml_invalid",
-                message=f"Planner YAML failed to parse ({exc}); treating as no-op turn.",
+                code="edit_plan_yaml_truncated_recovered",
+                message="Planner YAML was truncated; recovered the parseable prefix.",
             )
         )
-        return reply, []
     ops = data.get("operations") if isinstance(data, dict) else None
-    return reply, ops if isinstance(ops, list) else []
+    return reply, ops if isinstance(ops, list) else [], False
+
+
+def _parse_yaml_prefix(raw: str) -> dict | None:
+    """Best-effort parse of a truncated YAML document, longest prefix first."""
+    lines = raw.splitlines()
+    for end in range(len(lines) - 1, 0, -1):
+        try:
+            data = yaml.safe_load("\n".join(lines[:end]))
+        except yaml.YAMLError:
+            continue
+        if isinstance(data, dict) and isinstance(data.get("operations"), list):
+            return data
+    return None
 
 
 def _validate_operations(

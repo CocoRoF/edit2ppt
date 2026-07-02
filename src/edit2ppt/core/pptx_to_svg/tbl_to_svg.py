@@ -148,7 +148,12 @@ def convert_tbl(
                 tx_body, tcPr, cell_xfrm, palette, theme_fonts,
             )
             if text_result.svg:
-                body_parts.append(text_result.svg)
+                # Editing hook: grid coordinates match python-pptx's
+                # table.cell(row, col) addressing (merge anchors included,
+                # dropped cells skipped) — see tools/apply_text_edits.
+                body_parts.append(
+                    f'<g data-e2p-cell="{r},{c}">{text_result.svg}</g>'
+                )
 
     # Pass C: cell borders. Drawn last so they appear on top of fills/text.
     for r, row_cells in enumerate(cells):
