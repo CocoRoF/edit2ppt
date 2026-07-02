@@ -35,6 +35,7 @@ from ..core.svg_to_pptx.svg_scale import scale_svg_to_viewbox
 from ..llm import AnthropicClient, DEFAULT_MODEL, build_output_lang_directive, load_prompt
 from ..llm.anthropic_client import LLMUsage
 from ._workspace import temp_workspace
+from .convert import ConvertRequest, convert_to_markdown
 from .generate_deck import EventCallback, StageEvent, _emit, _merge_cost
 from .render_preview import RenderPreviewRequest, render_preview
 from .types import (
@@ -59,6 +60,10 @@ class EditDeckRequest(ToolRequest):
         default_factory=list,
         description="Prior turns, oldest first. Only the last 12 are used.",
     )
+    # Reference documents attached to THIS turn (PDF/DOCX/...) — converted to
+    # markdown and handed to the planner so instructions like "이 문서 내용
+    # 반영해서 3번 슬라이드 고쳐줘" have the material in context.
+    sources: list[ConvertRequest] = Field(default_factory=list)
     lang: LangCode = DEFAULT_LANG
     model: str = DEFAULT_MODEL
     anthropic_api_key: str = Field(..., description="BYOK; never persisted.")
@@ -87,16 +92,22 @@ async def edit_deck(
 
     await _emit(on_event, StageEvent(stage="queued", progress=0.0, message_key="stages.queued"))
 
-    # Stage 1: render the current deck (deterministic).
+    # Stage 1: render the current deck (deterministic) and convert any
+    # attached reference documents to markdown, in parallel.
     await _emit(
         on_event,
         StageEvent(stage="analyzing_deck", progress=0.08, message_key="stages.analyzing_deck"),
     )
-    preview = await asyncio.to_thread(
-        render_preview, RenderPreviewRequest(pptx=req.pptx)
-    )
-    cost = _merge_cost(cost, preview.cost)
+    preview_task = asyncio.to_thread(render_preview, RenderPreviewRequest(pptx=req.pptx))
+    convert_tasks = [
+        asyncio.to_thread(convert_to_markdown, src) for src in req.sources
+    ]
+    preview, *convert_results = await asyncio.gather(preview_task, *convert_tasks)
+    cost = _merge_cost(cost, preview.cost, *[c.cost for c in convert_results])
     warnings.extend(preview.warnings)
+    for c in convert_results:
+        warnings.extend(c.warnings)
+    sources_markdown = [c.markdown for c in convert_results]
     slide_svgs = [s.svg for s in preview.slides]
     canvas_w, canvas_h = preview.width_px, preview.height_px
 
@@ -107,7 +118,9 @@ async def edit_deck(
     )
     client = AnthropicClient(api_key=req.anthropic_api_key, model=req.model)
     planner_system = build_output_lang_directive(req.lang) + "\n\n" + load_prompt("editor-planner")
-    planner_user = _build_planner_message(req, slide_svgs, canvas_w, canvas_h)
+    planner_user = _build_planner_message(
+        req, slide_svgs, canvas_w, canvas_h, sources_markdown=sources_markdown
+    )
     result = await client.complete(
         system_prompt=planner_system,
         user_message=planner_user,
@@ -274,7 +287,12 @@ async def edit_deck(
 
 
 def _build_planner_message(
-    req: EditDeckRequest, slide_svgs: list[str], canvas_w: float, canvas_h: float
+    req: EditDeckRequest,
+    slide_svgs: list[str],
+    canvas_w: float,
+    canvas_h: float,
+    *,
+    sources_markdown: list[str] | None = None,
 ) -> str:
     lines: list[str] = []
     lines.append("# Deck outline")
@@ -283,6 +301,22 @@ def _build_planner_message(
         text = _extract_slide_text(svg, limit=280)
         lines.append(f"- Slide {i}: {text or '(no text)'}")
     lines.append("")
+    if sources_markdown:
+        lines.append("# Reference documents (attached to this turn)")
+        lines.append(
+            "Use these as source material when the instruction refers to "
+            "attached files. Quote concrete facts/text from them in your "
+            "briefs so the slide editor can write real content."
+        )
+        for i, md in enumerate(sources_markdown, start=1):
+            body = md.strip()
+            if len(body) > 6000:
+                body = body[:6000] + "\n…(truncated)"
+            lines.append(f"## Document {i}")
+            lines.append("```markdown")
+            lines.append(body)
+            lines.append("```")
+        lines.append("")
     if req.chat_history:
         lines.append("# Chat history (most recent last)")
         for turn in req.chat_history[-12:]:

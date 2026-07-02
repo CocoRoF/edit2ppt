@@ -22,6 +22,12 @@ from .analyze_template import (
     AnalyzeTemplateResponse,
     analyze_template,
 )
+from .apply_text_edits import (
+    ApplyTextEditsRequest,
+    ApplyTextEditsResponse,
+    TextEdit,
+    apply_text_edits,
+)
 from .convert import ConvertRequest, ConvertResponse, convert_to_markdown
 from .edit_deck import ChatTurn, EditDeckRequest, EditDeckResponse, edit_deck
 from .execute import (
@@ -86,6 +92,11 @@ __all__ = [
     "AnalyzeTemplateRequest",
     "AnalyzeTemplateResponse",
     "analyze_template",
+    # apply_text_edits
+    "ApplyTextEditsRequest",
+    "ApplyTextEditsResponse",
+    "TextEdit",
+    "apply_text_edits",
     # edit_deck
     "ChatTurn",
     "EditDeckRequest",

@@ -96,6 +96,10 @@ class EditDeckBody(BaseModel):
         default_factory=list,
         description='Prior turns: [{"role": "user"|"assistant", "content": "..."}].',
     )
+    source_asset_ids: list[uuid.UUID] = Field(
+        default_factory=list,
+        description="Reference documents attached to this turn (assets from /v1/assets).",
+    )
     lang: str = "ko-KR"
     model: str = "claude-opus-4-7"
     output_basename: str | None = None
@@ -286,6 +290,7 @@ async def enqueue_edit_deck(
         "pptx_asset_id": str(body.pptx_asset_id),
         "instruction": body.instruction,
         "chat_history": body.chat_history[-12:],
+        "source_asset_ids": [str(x) for x in body.source_asset_ids],
         "lang": body.lang,
         "model": body.model,
         "output_basename": body.output_basename or "deck",
