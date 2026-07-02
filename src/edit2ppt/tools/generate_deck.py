@@ -71,6 +71,7 @@ from .types import (
 StageName = Literal[
     "queued",
     "converting",
+    "analyzing_template",
     "strategizing",
     "acquiring_images",
     "executing_pages",
@@ -105,6 +106,20 @@ class GenerateDeckRequest(ToolRequest):
     style: ExecutorStyle = "general"
     lang: LangCode = DEFAULT_LANG
     template_name: str | None = None
+
+    # User-provided PPTX template (raw bytes) + how to use it:
+    #   "new"              — ignore template_pptx; current from-scratch path.
+    #   "template_restyle" — generate a fresh deck INSIDE the template
+    #                        package (its masters/theme/layouts preserved,
+    #                        original slides removed).
+    #   "template_extend"  — append the generated slides to the template's
+    #                        existing slides (deck grows).
+    # In both template modes the Strategist receives a deterministic
+    # analysis digest and canvas_format is overridden to match the
+    # template's slide size (16:9 -> ppt169, 4:3 -> ppt43).
+    template_pptx: bytes | None = None
+    deck_mode: Literal["new", "template_restyle", "template_extend"] = "new"
+
     model: str = DEFAULT_MODEL
     anthropic_api_key: str = Field(..., description="BYOK; never persisted.")
     fail_on_quality_error: bool = True
@@ -199,6 +214,61 @@ async def generate_deck(
             warnings.extend(r.warnings)
         sources_markdown = [r.markdown for r in convert_results]
 
+    # Stage 1.5: analyze the user-provided template PPTX (deterministic).
+    # Overrides canvas_format so downstream stages (layout brief, executor,
+    # export scale) all speak the template's slide geometry.
+    canvas_format = req.canvas_format
+    deck_mode = req.deck_mode
+    template_context: str | None = None
+    template_analysis = None
+    if req.template_pptx is not None and deck_mode == "new":
+        deck_mode = "template_restyle"
+        warnings.append(
+            WarningEntry(
+                code="deck_mode_defaulted_to_template_restyle",
+                message=(
+                    "template_pptx was provided with deck_mode='new'; "
+                    "defaulting to 'template_restyle'."
+                ),
+            )
+        )
+    if deck_mode != "new" and req.template_pptx is None:
+        raise ValueError(
+            f"deck_mode={deck_mode!r} requires template_pptx. "
+            "템플릿 모드는 템플릿 PPTX 파일이 필요합니다."
+        )
+    if req.template_pptx is not None:
+        await _emit(
+            on_event,
+            StageEvent(
+                stage="analyzing_template",
+                progress=0.12,
+                message_key="stages.analyzing_template",
+            ),
+        )
+        from .analyze_template import AnalyzeTemplateRequest, analyze_template
+
+        template_analysis = await asyncio.to_thread(
+            analyze_template,
+            AnalyzeTemplateRequest(pptx=req.template_pptx, deck_mode=deck_mode),
+        )
+        cost = _merge_cost(cost, template_analysis.cost)
+        warnings.extend(template_analysis.warnings)
+        template_context = template_analysis.template_context
+        if template_analysis.canvas_format != canvas_format:
+            warnings.append(
+                WarningEntry(
+                    code="canvas_format_overridden_by_template",
+                    message=(
+                        f"canvas_format {canvas_format!r} -> "
+                        f"{template_analysis.canvas_format!r} to match the "
+                        f"template's slide size "
+                        f"({template_analysis.host_width_px}x{template_analysis.host_height_px}px)."
+                    ),
+                )
+            )
+            canvas_format = template_analysis.canvas_format
+
     # Stage 2: strategize (LLM)
     await _emit(
         on_event,
@@ -210,8 +280,9 @@ async def generate_deck(
             sources_markdown=sources_markdown,
             user_intent=req.user_intent,
             template_name=req.template_name,
+            template_context=template_context,
             target_pages=req.target_pages,
-            canvas_format=req.canvas_format,
+            canvas_format=canvas_format,
             style=req.style,
             lang=req.lang,
             model=req.model,
@@ -397,7 +468,7 @@ async def generate_deck(
         StageEvent(stage="checking_quality", progress=0.80, message_key="stages.checking_quality"),
     )
     page_results = {p.page_index: p for p in exec_batch.results}
-    quality_resp = _run_quality_check(page_results, req.canvas_format, image_bytes_by_filename)
+    quality_resp = _run_quality_check(page_results, canvas_format, image_bytes_by_filename)
     cost = _merge_cost(cost, quality_resp.cost)
 
     # Layout-repair surfaced its findings on each page's `warnings`
@@ -523,7 +594,7 @@ async def generate_deck(
             per_page_attempts[i] = per_page_attempts.get(i, 0) + 1
             total_remaining -= 1
 
-        quality_resp = _run_quality_check(page_results, req.canvas_format, image_bytes_by_filename)
+        quality_resp = _run_quality_check(page_results, canvas_format, image_bytes_by_filename)
         cost = _merge_cost(cost, quality_resp.cost)
         _promote_layout_violations(page_results, quality_resp)
 
@@ -621,12 +692,21 @@ async def generate_deck(
     export_resp: ExportResponse = export_pptx(
         ExportRequest(
             slides=slides,
-            canvas_format=req.canvas_format,
+            canvas_format=canvas_format,
             lang=req.lang,
             images=image_bytes_by_filename,
             narration_audio=narration_bytes_by_slide,
             narration_padding=req.narration_padding,
             use_narration_timings=req.narration_use_timings,
+            # Template modes splice the generated slides into the user's
+            # package instead of building a fresh deck.
+            host_pptx=req.template_pptx if deck_mode != "new" else None,
+            clear_existing_slides=(deck_mode == "template_restyle"),
+            host_px=(
+                (template_analysis.host_width_px, template_analysis.host_height_px)
+                if deck_mode != "new" and template_analysis is not None
+                else None
+            ),
         )
     )
     cost = _merge_cost(cost, export_resp.cost)

@@ -57,6 +57,8 @@ async def run_generate_deck(ctx: ExecutionContext) -> None:
     lang: str = params.get("lang", "ko-KR")
     style: str = params.get("style", "general")
     template_name: str | None = params.get("template_name")
+    template_asset_id: str | None = params.get("template_asset_id")
+    deck_mode: str = params.get("deck_mode", "new")
     canvas_format: str = params.get("canvas_format", "ppt169")
     model: str = params.get("model", "claude-opus-4-7")
     anthropic_api_key: str = params["anthropic_api_key"]
@@ -84,6 +86,23 @@ async def run_generate_deck(ctx: ExecutionContext) -> None:
                 original_filename=asset.original_filename,
             )
         )
+
+    # 1b. Pull the user-provided template PPTX (template modes only).
+    template_pptx: bytes | None = None
+    if template_asset_id:
+        t_asset_id = uuid.UUID(template_asset_id)
+        t_asset = (
+            await session.execute(
+                select(Asset).where(
+                    Asset.id == t_asset_id, Asset.tenant_id == job.tenant_id
+                )
+            )
+        ).scalar_one_or_none()
+        if t_asset is None:
+            raise RuntimeError(
+                f"template asset {t_asset_id} not found for tenant {job.tenant_id}"
+            )
+        template_pptx = await storage.get_bytes(t_asset.storage_key)
 
     # 2. Stream tool-layer StageEvents to the job event bus.
     async def on_event(event: StageEvent) -> None:
@@ -114,6 +133,8 @@ async def run_generate_deck(ctx: ExecutionContext) -> None:
             style=style,  # type: ignore[arg-type]
             lang=lang,  # type: ignore[arg-type]
             template_name=template_name,
+            template_pptx=template_pptx,
+            deck_mode=deck_mode,  # type: ignore[arg-type]
             model=model,
             anthropic_api_key=anthropic_api_key,
             fail_on_quality_error=False,

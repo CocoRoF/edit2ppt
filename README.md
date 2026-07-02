@@ -18,6 +18,23 @@ Two things make it different from ppt-master:
 2. **Korean-native.** Hangul text width, Korean fonts, OOXML `lang="ko-KR"`,
    bilingual error messages, and Korean layout templates ship out of the box.
 
+## Use your own PPTX as the template
+
+Upload any `.pptx` via `POST /v1/assets` (or the MCP `upload_source` tool) and
+pass its id as `template_asset_id` on `generate-deck`:
+
+- `deck_mode: "template_restyle"` — a **fresh deck built inside your package**:
+  your slide masters, layouts, theme colors and fonts are preserved (background
+  chrome / logos render behind every generated slide); the original slides are
+  removed. The Strategist receives a deterministic analysis of your theme
+  (colors / fonts / canvas / tone samples) and designs to match it.
+- `deck_mode: "template_extend"` — the generated slides (native DrawingML
+  shapes, charts, icons and SVG-derived graphics) are **appended after your
+  existing slides**, so the deck grows in place.
+
+16:9 and 4:3 templates are supported; generated coordinates are rescaled to the
+host deck's exact slide dimensions.
+
 ## Architecture (at a glance)
 
 ```
