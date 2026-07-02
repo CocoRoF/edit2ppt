@@ -23,6 +23,7 @@ from .analyze_template import (
     analyze_template,
 )
 from .convert import ConvertRequest, ConvertResponse, convert_to_markdown
+from .edit_deck import ChatTurn, EditDeckRequest, EditDeckResponse, edit_deck
 from .execute import (
     ExecuteBatchRequest,
     ExecuteBatchResponse,
@@ -46,6 +47,12 @@ from .images import (
     SearchImageResponse,
     generate_image,
     search_image,
+)
+from .render_preview import (
+    RenderPreviewRequest,
+    RenderPreviewResponse,
+    SlidePreview,
+    render_preview,
 )
 from .quality import (
     QualityCheckRequest,
@@ -79,6 +86,16 @@ __all__ = [
     "AnalyzeTemplateRequest",
     "AnalyzeTemplateResponse",
     "analyze_template",
+    # edit_deck
+    "ChatTurn",
+    "EditDeckRequest",
+    "EditDeckResponse",
+    "edit_deck",
+    # render_preview
+    "RenderPreviewRequest",
+    "RenderPreviewResponse",
+    "SlidePreview",
+    "render_preview",
     # convert
     "ConvertRequest",
     "ConvertResponse",

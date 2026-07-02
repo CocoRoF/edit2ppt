@@ -27,6 +27,8 @@ PROMPTS_DIR = Path(__file__).resolve().parent.parent / "core" / "prompts"
 # Roles whose prompt files must exist as <role>.en.md.
 KNOWN_ROLES: set[str] = {
     "strategist",
+    "editor-planner",
+    "editor-slide",
     "executor-base",
     "executor-consultant",
     "executor-consultant-top",

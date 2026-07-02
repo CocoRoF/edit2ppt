@@ -85,6 +85,23 @@ class GenerateDeckBody(BaseModel):
     fail_on_quality_error: bool = False
 
 
+class EditDeckBody(BaseModel):
+    """Body for POST /v1/jobs/edit-deck (one chat-edit turn)."""
+
+    pptx_asset_id: uuid.UUID = Field(
+        ..., description="Current deck revision — a pptx asset from /v1/assets or a prior job."
+    )
+    instruction: str = Field(..., min_length=1, description="The chat message to apply.")
+    chat_history: list[dict] = Field(
+        default_factory=list,
+        description='Prior turns: [{"role": "user"|"assistant", "content": "..."}].',
+    )
+    lang: str = "ko-KR"
+    model: str = "claude-opus-4-7"
+    output_basename: str | None = None
+    project_id: uuid.UUID | None = None
+
+
 class JobResponse(BaseModel):
     id: uuid.UUID
     tenant_id: uuid.UUID
@@ -226,6 +243,66 @@ async def enqueue_generate_deck(
     if arq_pool is None:
         asyncio.create_task(_run_inline(job.id))
 
+    return JobResponse.from_row(job)
+
+
+@router.post(
+    "/edit-deck",
+    response_model=JobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Enqueue one chat-edit turn on an existing deck",
+)
+async def enqueue_edit_deck(
+    body: EditDeckBody,
+    request: Request,
+    tenant: CurrentTenant,
+    session: DbSession,
+    x_anthropic_api_key: Annotated[str | None, Header(alias="X-Anthropic-API-Key")] = None,
+) -> JobResponse:
+    """Create a queued edit_deck job (same queue semantics as generate-deck)."""
+    anthropic_key = x_anthropic_api_key or ""
+    if not anthropic_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "LLM_API_KEY_MISSING",
+                "message": "Anthropic API 키가 필요합니다. X-Anthropic-API-Key 헤더로 전달하세요.",
+                "message_en": "Anthropic API key required. Pass via X-Anthropic-API-Key header.",
+            },
+        )
+
+    for turn in body.chat_history:
+        if not isinstance(turn, dict) or turn.get("role") not in ("user", "assistant"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "INVALID_CHAT_HISTORY",
+                    "message": 'chat_history 항목은 {"role": "user"|"assistant", "content": "..."} 형식이어야 합니다.',
+                    "message_en": 'chat_history entries must be {"role": "user"|"assistant", "content": "..."}.',
+                },
+            )
+
+    params = {
+        "pptx_asset_id": str(body.pptx_asset_id),
+        "instruction": body.instruction,
+        "chat_history": body.chat_history[-12:],
+        "lang": body.lang,
+        "model": body.model,
+        "output_basename": body.output_basename or "deck",
+        # BYOK key — worker reads + nulls this out on completion (M6 encrypts).
+        "anthropic_api_key": anthropic_key,
+    }
+    arq_pool = getattr(request.app.state, "arq_pool", None)
+    job = await enqueue_job(
+        session=session,
+        tenant=tenant,
+        kind=JobKind.edit_deck,
+        params=params,
+        project_id=body.project_id,
+        arq_pool=arq_pool,
+    )
+    if arq_pool is None:
+        asyncio.create_task(_run_inline(job.id))
     return JobResponse.from_row(job)
 
 

@@ -78,6 +78,11 @@ StageName = Literal[
     "checking_quality",
     "narrating",
     "exporting",
+    # edit_deck (chat editing) stages — see tools/edit_deck.py
+    "analyzing_deck",
+    "planning_edits",
+    "editing_slides",
+    "applying_edits",
     "done",
     "failed",
 ]
