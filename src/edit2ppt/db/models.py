@@ -83,6 +83,7 @@ class AssetKind(str, enum.Enum):
 
 class JobKind(str, enum.Enum):
     generate_deck = "generate_deck"
+    edit_deck = "edit_deck"
     convert = "convert"
     strategize = "strategize"
     execute = "execute"

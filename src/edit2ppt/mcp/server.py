@@ -404,6 +404,106 @@ def build_mcp_server(context: MCPContext | None = None) -> FastMCP:
             }
 
     @mcp.tool(
+        name="edit_deck",
+        description=(
+            "Apply one chat-edit turn to an existing PPTX. Upload the deck "
+            "with upload_source (or use a pptx asset produced by "
+            "generate_deck), then pass its id with a natural-language "
+            "instruction — e.g. '3번 슬라이드 제목을 바꿔줘', 'add a roadmap "
+            "slide after slide 2', 'delete the last slide'. Returns the new "
+            "revision's pptx_asset_id (the input asset is left untouched), "
+            "the applied operations and a chat reply. Question-only "
+            "instructions answer without changing the deck."
+        ),
+    )
+    async def edit_deck_tool(
+        pptx_asset_id: str,
+        instruction: str,
+        anthropic_api_key: str,
+        chat_history: list[dict] | None = None,
+        lang: str = "ko-KR",
+        model: str = "claude-opus-4-7",
+        output_basename: str = "deck",
+        mcp_ctx: Context | None = None,
+    ) -> dict[str, Any]:
+        if not anthropic_api_key:
+            raise AssetError(
+                "anthropic_api_key is required. Pass it on this call only — "
+                "edit2ppt never persists BYOK keys."
+            )
+        try:
+            deck_uuid = uuid.UUID(pptx_asset_id)
+        except ValueError as exc:
+            raise AssetError(f"pptx_asset_id must be a valid UUID: {exc}") from exc
+
+        from ..tools.edit_deck import ChatTurn, EditDeckRequest, edit_deck
+
+        async with ctx_provider.scope() as scope:
+            asset = await get_asset(
+                session=scope.session, tenant=scope.tenant, asset_id=deck_uuid
+            )
+            pptx_bytes = await scope.storage.get_bytes(asset.storage_key)
+
+            async def on_event(event: StageEvent) -> None:
+                if mcp_ctx is None:
+                    return
+                try:
+                    await mcp_ctx.report_progress(
+                        progress=event.progress, total=1.0, message=event.stage
+                    )
+                except Exception:
+                    pass
+
+            resp = await edit_deck(
+                EditDeckRequest(
+                    pptx=pptx_bytes,
+                    instruction=instruction,
+                    chat_history=[
+                        ChatTurn(role=t["role"], content=str(t.get("content", "")))
+                        for t in (chat_history or [])
+                        if isinstance(t, dict) and t.get("role") in ("user", "assistant")
+                    ],
+                    lang=lang,  # type: ignore[arg-type]
+                    model=model,
+                    anthropic_api_key=anthropic_api_key,
+                ),
+                on_event=on_event,
+            )
+
+            result_asset_id = pptx_asset_id
+            if resp.changed:
+                pptx_upload = await upload_asset(
+                    session=scope.session,
+                    storage=scope.storage,
+                    tenant=scope.tenant,
+                    kind=AssetKind.pptx,
+                    content=resp.pptx,
+                    original_filename=f"{output_basename}.pptx",
+                    mime_type=(
+                        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                    ),
+                )
+                result_asset_id = str(pptx_upload.asset.id)
+
+            return {
+                "pptx_asset_id": result_asset_id,
+                "changed": resp.changed,
+                "page_count": resp.page_count,
+                "reply": resp.reply,
+                "operations": resp.operations,
+                "cost": {
+                    "input_tokens": resp.cost.input_tokens,
+                    "output_tokens": resp.cost.output_tokens,
+                    "cache_read_tokens": resp.cost.cache_read_tokens,
+                    "cache_write_tokens": resp.cost.cache_write_tokens,
+                    "duration_seconds": resp.cost.duration_seconds,
+                },
+                "warnings": [
+                    {"code": w.code, "message": w.message} for w in resp.warnings
+                ],
+            }
+
+    @mcp.tool(
         name="download_url",
         description=(
             "Issue a short-lived signed GET URL for downloading an asset. The "

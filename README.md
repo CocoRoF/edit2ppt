@@ -35,6 +35,22 @@ pass its id as `template_asset_id` on `generate-deck`:
 16:9 and 4:3 templates are supported; generated coordinates are rescaled to the
 host deck's exact slide dimensions.
 
+## Chat-edit an existing deck
+
+Two endpoints power the web studio's "PPT 같이 만들기" (and are exposed over
+MCP as `edit_deck`):
+
+- `POST /v1/preview` — deterministic, synchronous: every slide rendered to a
+  self-contained SVG (masters/layouts inlined, images base64-embedded) for
+  browser display.
+- `POST /v1/jobs/edit-deck` — one chat turn: an LLM planner turns the
+  instruction + deck outline into slide-level operations (edit / add /
+  delete), one LLM call per touched slide rewrites its SVG, then a
+  deterministic recompose splices the result back into the package. Untouched
+  slides keep their identity (ids, notes, animations). Each turn produces a
+  new pptx asset; the prior revision is preserved. Question-only turns answer
+  in chat without changing the deck.
+
 ## Architecture (at a glance)
 
 ```

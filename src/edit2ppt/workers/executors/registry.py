@@ -46,4 +46,4 @@ def register(kind: JobKind):
 
 # Import every executor module so its @register call populates EXECUTORS at
 # the time the worker starts up.
-from . import generate_deck, noop  # noqa: F401, E402  (re-export for side effect)
+from . import edit_deck, generate_deck, noop  # noqa: F401, E402  (re-export for side effect)

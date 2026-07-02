@@ -159,59 +159,17 @@ def append_svg_slides_to_pptx(
 
         for offset, svg_path in enumerate(svg_files):
             slide_num = next_slide_num + offset
-            slide_xml, media_files_dict, rel_entries, _anim_targets = (
-                convert_svg_to_slide_shapes(svg_path, slide_num=slide_num, verbose=verbose)
+            rels_path = write_slide_part_from_svg(
+                extract_dir,
+                svg_path,
+                slide_num=slide_num,
+                layout_rel_target=layout_rel_target,
+                media_cache=media_cache,
+                image_exts_used=image_exts_used,
+                transition=transition,
+                transition_duration=transition_duration,
+                verbose=verbose,
             )
-
-            if transition and create_transition_xml is not None:
-                transition_xml = "\n" + create_transition_xml(
-                    effect=transition,
-                    duration=transition_duration,
-                    advance_after=None,
-                )
-                slide_xml = slide_xml.replace("</p:sld>", transition_xml + "\n</p:sld>")
-
-            slide_xml_path = slides_dir / f"slide{slide_num}.xml"
-            slide_xml_path.write_text(slide_xml, encoding="utf-8")
-
-            # Media: hash-deduplicated names, shared across the whole package.
-            media_name_map: dict[str, str] = {}
-            for media_name, media_data in media_files_dict.items():
-                ext = media_name.rsplit(".", 1)[-1].lower()
-                media_hash = hashlib.sha256(media_data).hexdigest()
-                cache_key = (ext, media_hash)
-                cached_name = media_cache.get(cache_key)
-                if cached_name is None:
-                    cached_name = f"image_{media_hash[:16]}.{ext}"
-                    media_cache[cache_key] = cached_name
-                    (media_dir / cached_name).write_bytes(media_data)
-                media_name_map[media_name] = cached_name
-                image_exts_used.add(ext)
-
-            for rel in rel_entries:
-                target = rel.get("target", "")
-                if not target.startswith("../media/"):
-                    continue
-                media_name = target.split("../media/", 1)[1]
-                mapped_name = media_name_map.get(media_name)
-                if mapped_name:
-                    rel["target"] = f"../media/{mapped_name}"
-
-            # Slide rels: rId1 -> host layout; converter entries start at rId2.
-            extra_rels = "".join(
-                f'\n  <Relationship Id="{rel["id"]}" '
-                f'Type="{rel["type"]}" Target="{rel["target"]}"/>'
-                for rel in rel_entries
-            )
-            rels_xml = (
-                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n'
-                f'  <Relationship Id="rId1" Type="{SLIDE_LAYOUT_REL_TYPE}" '
-                f'Target="{layout_rel_target}"/>{extra_rels}\n'
-                "</Relationships>"
-            )
-            rels_path = slides_dir / "_rels" / f"slide{slide_num}.xml.rels"
-            rels_path.write_text(rels_xml, encoding="utf-8")
 
             # Speaker notes.
             notes_text = notes.get(svg_path.stem, "") if enable_notes else ""
@@ -277,6 +235,90 @@ def append_svg_slides_to_pptx(
         return warnings
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# Shared slide-part writer (used by append + pptx_edit.recompose)
+# ---------------------------------------------------------------------------
+
+
+def write_slide_part_from_svg(
+    extract_dir: Path,
+    svg_path: Path,
+    *,
+    slide_num: int,
+    layout_rel_target: str,
+    media_cache: dict[tuple[str, str], str],
+    image_exts_used: set[str],
+    transition: str | None = "fade",
+    transition_duration: float = 0.5,
+    verbose: bool = False,
+) -> Path:
+    """Write ``slide{slide_num}.xml`` (+ rels + media) into the package.
+
+    Does NOT touch presentation.xml / [Content_Types].xml — callers wire the
+    part in themselves. Returns the slide's rels path (so callers can append
+    further relationships, e.g. notes).
+    """
+    slides_dir = extract_dir / "ppt" / "slides"
+    slides_dir.mkdir(exist_ok=True)
+    (slides_dir / "_rels").mkdir(exist_ok=True)
+    media_dir = extract_dir / "ppt" / "media"
+    media_dir.mkdir(exist_ok=True)
+
+    slide_xml, media_files_dict, rel_entries, _anim_targets = (
+        convert_svg_to_slide_shapes(svg_path, slide_num=slide_num, verbose=verbose)
+    )
+
+    if transition and create_transition_xml is not None:
+        transition_xml = "\n" + create_transition_xml(
+            effect=transition,
+            duration=transition_duration,
+            advance_after=None,
+        )
+        slide_xml = slide_xml.replace("</p:sld>", transition_xml + "\n</p:sld>")
+
+    (slides_dir / f"slide{slide_num}.xml").write_text(slide_xml, encoding="utf-8")
+
+    # Media: hash-deduplicated names, shared across the whole package.
+    media_name_map: dict[str, str] = {}
+    for media_name, media_data in media_files_dict.items():
+        ext = media_name.rsplit(".", 1)[-1].lower()
+        media_hash = hashlib.sha256(media_data).hexdigest()
+        cache_key = (ext, media_hash)
+        cached_name = media_cache.get(cache_key)
+        if cached_name is None:
+            cached_name = f"image_{media_hash[:16]}.{ext}"
+            media_cache[cache_key] = cached_name
+            (media_dir / cached_name).write_bytes(media_data)
+        media_name_map[media_name] = cached_name
+        image_exts_used.add(ext)
+
+    for rel in rel_entries:
+        target = rel.get("target", "")
+        if not target.startswith("../media/"):
+            continue
+        media_name = target.split("../media/", 1)[1]
+        mapped_name = media_name_map.get(media_name)
+        if mapped_name:
+            rel["target"] = f"../media/{mapped_name}"
+
+    # Slide rels: rId1 -> host layout; converter entries start at rId2.
+    extra_rels = "".join(
+        f'\n  <Relationship Id="{rel["id"]}" '
+        f'Type="{rel["type"]}" Target="{rel["target"]}"/>'
+        for rel in rel_entries
+    )
+    rels_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n'
+        f'  <Relationship Id="rId1" Type="{SLIDE_LAYOUT_REL_TYPE}" '
+        f'Target="{layout_rel_target}"/>{extra_rels}\n'
+        "</Relationships>"
+    )
+    rels_path = slides_dir / "_rels" / f"slide{slide_num}.xml.rels"
+    rels_path.write_text(rels_xml, encoding="utf-8")
+    return rels_path
 
 
 # ---------------------------------------------------------------------------
@@ -383,14 +425,25 @@ def _remove_slide(extract_dir: Path, *, rel_id: str, target: str) -> None:
     layouts/masters may share them, and orphans are harmless.
     """
     presentation_path = extract_dir / "ppt" / "presentation.xml"
-    presentation_rels_path = extract_dir / "ppt" / "_rels" / "presentation.xml.rels"
-    content_types_path = extract_dir / "[Content_Types].xml"
 
     content = presentation_path.read_text(encoding="utf-8")
     content = re.sub(
         rf"<p:sldId\b[^>]*\br:id=\"{re.escape(rel_id)}\"[^>]*/>\s*", "", content
     )
     presentation_path.write_text(content, encoding="utf-8")
+
+    remove_slide_parts(extract_dir, rel_id=rel_id, target=target)
+
+
+def remove_slide_parts(extract_dir: Path, *, rel_id: str, target: str) -> None:
+    """Delete a slide's parts without touching presentation.xml's sldIdLst.
+
+    Used directly by ``pptx_edit.recompose_pptx``, which rebuilds the whole
+    sldIdLst itself and only needs the presentation rel entry, part files,
+    notesSlides and content-type overrides gone.
+    """
+    presentation_rels_path = extract_dir / "ppt" / "_rels" / "presentation.xml.rels"
+    content_types_path = extract_dir / "[Content_Types].xml"
 
     rels = presentation_rels_path.read_text(encoding="utf-8")
     rels = re.sub(rf"[ \t]*<Relationship\b[^>]*\bId=\"{re.escape(rel_id)}\"[^>]*/>\n?", "", rels)
