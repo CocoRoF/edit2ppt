@@ -22,6 +22,7 @@ errors:
 stages:
   queued: "Job queued"
   converting: "Converting sources to markdown"
+  analyzing_template: "Analyzing template PPTX"
   strategizing: "Designing presentation strategy"
   acquiring_images: "Acquiring images"
   generating_image: "Generating image: {prompt_short}"

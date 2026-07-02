@@ -17,6 +17,11 @@ from .audio import (
     narrate,
     narrate_async,
 )
+from .analyze_template import (
+    AnalyzeTemplateRequest,
+    AnalyzeTemplateResponse,
+    analyze_template,
+)
 from .convert import ConvertRequest, ConvertResponse, convert_to_markdown
 from .execute import (
     ExecuteBatchRequest,
@@ -70,6 +75,10 @@ __all__ = [
     "QualityIssue",
     "SourceFormat",
     "WarningEntry",
+    # analyze_template
+    "AnalyzeTemplateRequest",
+    "AnalyzeTemplateResponse",
+    "analyze_template",
     # convert
     "ConvertRequest",
     "ConvertResponse",

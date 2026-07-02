@@ -242,7 +242,12 @@ def build_mcp_server(context: MCPContext | None = None) -> FastMCP:
             "Pass `image_api_keys={\"OPENAI_API_KEY\":...}` to enable AI-image "
             "generation for hero / chart slides. Pass `narrate=True` to embed "
             "Korean speaker-notes narration (Edge-TTS) into the resulting "
-            "PPTX so PowerPoint auto-plays it on slide entry."
+            "PPTX so PowerPoint auto-plays it on slide entry. "
+            "To reuse a user's own PPTX design, upload the .pptx with "
+            "upload_source, then pass its id as `template_asset_id` with "
+            "`deck_mode='template_restyle'` (fresh deck on the template's "
+            "masters/theme) or `deck_mode='template_extend'` (append the new "
+            "slides after the template's existing slides)."
         ),
     )
     async def generate_deck_tool(
@@ -254,6 +259,8 @@ def build_mcp_server(context: MCPContext | None = None) -> FastMCP:
         lang: str = "ko-KR",
         style: str = "general",
         template_name: str | None = None,
+        template_asset_id: str | None = None,
+        deck_mode: str = "new",
         canvas_format: str = "ppt169",
         model: str = "claude-opus-4-7",
         output_basename: str = "deck",
@@ -279,6 +286,19 @@ def build_mcp_server(context: MCPContext | None = None) -> FastMCP:
         except ValueError as exc:
             raise AssetError(f"source_asset_ids must be valid UUIDs: {exc}") from exc
 
+        if deck_mode not in ("new", "template_restyle", "template_extend"):
+            raise AssetError(
+                f"deck_mode '{deck_mode}' must be one of "
+                "new | template_restyle | template_extend."
+            )
+        if template_asset_id is not None and deck_mode == "new":
+            deck_mode = "template_restyle"
+        if deck_mode != "new" and template_asset_id is None:
+            raise AssetError(
+                f"deck_mode '{deck_mode}' requires template_asset_id — upload "
+                "the template PPTX with upload_source first."
+            )
+
         async with ctx_provider.scope() as scope:
             # 1. Resolve source assets to ConvertRequests.
             convert_reqs: list[ConvertRequest] = []
@@ -294,6 +314,20 @@ def build_mcp_server(context: MCPContext | None = None) -> FastMCP:
                         original_filename=asset.original_filename,
                     )
                 )
+
+            # 1b. Resolve the template PPTX (template modes only).
+            template_pptx: bytes | None = None
+            if template_asset_id is not None:
+                try:
+                    template_uuid = uuid.UUID(template_asset_id)
+                except ValueError as exc:
+                    raise AssetError(
+                        f"template_asset_id must be a valid UUID: {exc}"
+                    ) from exc
+                t_asset = await get_asset(
+                    session=scope.session, tenant=scope.tenant, asset_id=template_uuid
+                )
+                template_pptx = await scope.storage.get_bytes(t_asset.storage_key)
 
             # 2. Stream stage events back as MCP progress notifications.
             seen_stages: list[str] = []
@@ -322,6 +356,8 @@ def build_mcp_server(context: MCPContext | None = None) -> FastMCP:
                     style=style,  # type: ignore[arg-type]
                     lang=lang,  # type: ignore[arg-type]
                     template_name=template_name,
+                    template_pptx=template_pptx,
+                    deck_mode=deck_mode,  # type: ignore[arg-type]
                     model=model,
                     anthropic_api_key=anthropic_api_key,
                     fail_on_quality_error=False,

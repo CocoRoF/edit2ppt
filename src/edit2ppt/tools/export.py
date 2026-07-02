@@ -74,6 +74,16 @@ class ExportRequest(ToolRequest):
     narration_padding: float = Field(default=0.5, ge=0.0)
     use_narration_timings: bool = False
 
+    # Template modes: when `host_pptx` is set the slides are spliced into
+    # this user-provided package (masters/layouts/theme preserved) instead
+    # of a fresh python-pptx deck. `clear_existing_slides=True` drops the
+    # host's original slides afterwards (template_restyle). `host_px`
+    # rescales each SVG from the canonical canvas to the host's real
+    # pixel dimensions before DrawingML conversion.
+    host_pptx: bytes | None = None
+    clear_existing_slides: bool = False
+    host_px: tuple[int, int] | None = None
+
 
 class ExportResponse(ToolResponse):
     pptx: bytes
@@ -118,11 +128,24 @@ def export_pptx(req: ExportRequest) -> ExportResponse:
 
         # Sort by index so the resulting deck is deterministic regardless of caller order.
         for slide in sorted(req.slides, key=lambda s: s.index):
-            svg_path = write_text(svg_dir, f"{slide.name}.svg", slide.svg)
+            svg_markup = slide.svg
+            if req.host_pptx is not None and req.host_px is not None:
+                # Template mode: rescale from the canonical canvas to the
+                # host deck's real dimensions so 1 px = 9525 EMU lands
+                # exactly on the host slide.
+                from ..core.svg_to_pptx.svg_scale import scale_svg_to_viewbox
+
+                svg_markup = scale_svg_to_viewbox(
+                    svg_markup, float(req.host_px[0]), float(req.host_px[1])
+                )
+            svg_path = write_text(svg_dir, f"{slide.name}.svg", svg_markup)
             svg_paths.append(svg_path)
             if slide.notes:
                 notes_map[slide.name] = slide.notes
             detected.append(detect_lang(slide.svg, default=req.lang))  # type: ignore[arg-type]
+
+        if req.host_pptx is not None:
+            return _export_into_host(req, ws, svg_paths, notes_map, detected, started)
 
         # Narration audio: write MP3s and build the dict the engine expects
         # ({svg_stem: Path}). Keys must already match slide names.
@@ -166,6 +189,62 @@ def export_pptx(req: ExportRequest) -> ExportResponse:
         page_count=len(req.slides),
         detected_langs=detected,
         cost=CostBreakdown(duration_seconds=duration),
+        warnings=warnings,
+    )
+
+
+def _export_into_host(
+    req: ExportRequest,
+    ws: Path,
+    svg_paths: list[Path],
+    notes_map: dict[str, str],
+    detected: list[LangCode],
+    started: float,
+) -> ExportResponse:
+    """Template-mode export: splice the SVG slides into the host PPTX.
+
+    Narration audio is not embedded in template modes (v1) — the raw
+    append path doesn't carry the narration timing machinery. Callers
+    that requested it get a warning instead of an error.
+    """
+    from ..core.svg_to_pptx.pptx_append import append_svg_slides_to_pptx
+
+    warnings: list[WarningEntry] = []
+    if req.narration_audio:
+        warnings.append(
+            WarningEntry(
+                code="template_narration_unsupported",
+                message=(
+                    "Narration audio is not embedded in template modes yet; "
+                    "the deck exports without audio. 템플릿 모드에서는 나레이션 "
+                    "오디오 임베드가 아직 지원되지 않아 오디오 없이 내보냅니다."
+                ),
+            )
+        )
+
+    host_path = ws / "host.pptx"
+    host_path.write_bytes(req.host_pptx or b"")
+    output_path = ws / "output.pptx"
+    append_warnings = append_svg_slides_to_pptx(
+        host_path,
+        svg_paths,
+        output_path,
+        clear_existing=req.clear_existing_slides,
+        notes=notes_map or None,
+        enable_notes=req.enable_notes,
+        lang=req.lang,
+        transition=req.transition,
+        transition_duration=req.transition_duration,
+        verbose=False,
+    )
+    for w in append_warnings:
+        warnings.append(WarningEntry(code=w["code"], message=w["message"]))
+
+    return ExportResponse(
+        pptx=output_path.read_bytes(),
+        page_count=len(req.slides),
+        detected_langs=detected,
+        cost=CostBreakdown(duration_seconds=time.perf_counter() - started),
         warnings=warnings,
     )
 

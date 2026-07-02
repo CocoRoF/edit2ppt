@@ -66,6 +66,19 @@ class GenerateDeckBody(BaseModel):
     style: str = Field(default="general", description="general | consultant | consultant-top")
     lang: str = "ko-KR"
     template_name: str | None = None
+    # User-provided PPTX template: upload the .pptx via POST /v1/assets
+    # first, then reference it here. deck_mode picks how it is used:
+    #   template_restyle — fresh deck inside the template package
+    #                      (masters/theme preserved, original slides removed)
+    #   template_extend  — generated slides are appended after the
+    #                      template's existing slides
+    # Omitting deck_mode while template_asset_id is set implies
+    # template_restyle.
+    template_asset_id: uuid.UUID | None = None
+    deck_mode: str = Field(
+        default="new",
+        description="new | template_restyle | template_extend",
+    )
     model: str = "claude-opus-4-7"
     output_basename: str | None = None
     project_id: uuid.UUID | None = None
@@ -144,6 +157,40 @@ async def enqueue_generate_deck(
             },
         )
 
+    deck_mode = body.deck_mode
+    if deck_mode not in ("new", "template_restyle", "template_extend"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "INVALID_DECK_MODE",
+                "message": (
+                    f"deck_mode '{deck_mode}' 는 지원되지 않습니다 — "
+                    "new | template_restyle | template_extend 중 하나여야 합니다."
+                ),
+                "message_en": (
+                    f"Unsupported deck_mode '{deck_mode}'; expected one of "
+                    "new | template_restyle | template_extend."
+                ),
+            },
+        )
+    if body.template_asset_id is not None and deck_mode == "new":
+        deck_mode = "template_restyle"
+    if deck_mode != "new" and body.template_asset_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "TEMPLATE_ASSET_REQUIRED",
+                "message": (
+                    f"deck_mode '{deck_mode}' 는 template_asset_id 가 필요합니다. "
+                    "먼저 POST /v1/assets 로 템플릿 PPTX를 업로드하세요."
+                ),
+                "message_en": (
+                    f"deck_mode '{deck_mode}' requires template_asset_id; "
+                    "upload the template PPTX via POST /v1/assets first."
+                ),
+            },
+        )
+
     params = {
         "source_asset_ids": [str(x) for x in body.source_asset_ids],
         "user_intent": body.user_intent,
@@ -152,6 +199,10 @@ async def enqueue_generate_deck(
         "style": body.style,
         "lang": body.lang,
         "template_name": body.template_name,
+        "template_asset_id": (
+            str(body.template_asset_id) if body.template_asset_id else None
+        ),
+        "deck_mode": deck_mode,
         "model": body.model,
         "output_basename": body.output_basename or "deck",
         "fail_on_quality_error": body.fail_on_quality_error,

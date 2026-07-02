@@ -37,6 +37,10 @@ class StrategizeRequest(ToolRequest):
     sources_markdown: list[str] = Field(default_factory=list)
     user_intent: str = Field(..., min_length=1)
     template_name: str | None = None
+    # Deterministic digest of a user-provided template PPTX (theme colors,
+    # fonts, canvas, tone samples) produced by tools.analyze_template. When
+    # set, the Strategist is instructed to adopt that visual identity.
+    template_context: str | None = None
     target_pages: tuple[int, int] = Field(default=(8, 12))
     canvas_format: CanvasFormat = DEFAULT_CANVAS
     style: str = Field(
@@ -147,6 +151,10 @@ def _build_user_message(req: StrategizeRequest) -> str:
     lines.append("# User intent")
     lines.append(req.user_intent.strip())
     lines.append("")
+    if req.template_context:
+        lines.append("# Template analysis (from the user's uploaded PPTX)")
+        lines.append(req.template_context.strip())
+        lines.append("")
     if req.sources_markdown:
         lines.append("# Sources")
         for i, src in enumerate(req.sources_markdown, start=1):
