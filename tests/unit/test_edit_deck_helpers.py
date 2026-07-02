@@ -38,24 +38,52 @@ class TestPlanParsing:
             '    brief: "change title"\n```'
         )
         warnings: list = []
-        reply, ops = _parse_plan(text, warnings)
+        reply, ops, missing = _parse_plan(text, warnings)
         assert "3번" in reply
         assert ops == [{"action": "edit", "slide": 3, "brief": "change title"}]
+        assert missing is False
         assert warnings == []
 
-    def test_missing_plan_block_is_noop(self):
+    def test_missing_plan_block_flags_missing(self):
         warnings: list = []
-        reply, ops = _parse_plan("```reply\n답변만 합니다.\n```", warnings)
+        reply, ops, missing = _parse_plan("```reply\n답변만 합니다.\n```", warnings)
         assert ops == []
+        assert missing is True
         assert warnings[0].code == "edit_plan_block_missing"
 
-    def test_invalid_yaml_is_noop(self):
+    def test_empty_operations_is_valid_not_missing(self):
         warnings: list = []
-        _, ops = _parse_plan(
+        _, ops, missing = _parse_plan(
+            "```reply\n질문에 답변합니다.\n```\n```edit_plan\noperations: []\n```",
+            warnings,
+        )
+        assert ops == []
+        assert missing is False
+
+    def test_invalid_yaml_flags_missing(self):
+        warnings: list = []
+        _, ops, missing = _parse_plan(
             "```reply\nok\n```\n```edit_plan\n: not yaml [\n```", warnings
         )
         assert ops == []
-        assert warnings[0].code == "edit_plan_yaml_invalid"
+        assert missing is True
+
+    def test_unclosed_fence_is_recovered(self):
+        # Output-token limit can cut the plan mid-entry: no closing fence
+        # and a dangling last op. The parseable prefix must survive.
+        text = (
+            "```reply\n제목을 전부 바꿉니다.\n```\n"
+            "```edit_plan\n"
+            "operations:\n"
+            '  - action: edit\n    slide: 1\n    brief: "title 1"\n'
+            '  - action: edit\n    slide: 2\n    brief: "title 2"\n'
+            '  - action: edit\n    slide: 3\n    brief: "tit'  # truncated!
+        )
+        warnings: list = []
+        _, ops, missing = _parse_plan(text, warnings)
+        assert missing is False
+        assert len(ops) >= 2
+        assert ops[0] == {"action": "edit", "slide": 1, "brief": "title 1"}
 
 
 class TestOperationValidation:

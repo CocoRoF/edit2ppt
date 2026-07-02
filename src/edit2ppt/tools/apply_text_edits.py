@@ -7,9 +7,10 @@ the typed replacement straight into the OOXML run — python-pptx / lxml
 keeps the rest of the document byte-identical, so formatting, animations
 and notes survive untouched.
 
-Scope (v1): plain shapes (`p:sp`, including inside groups). Table cells,
-SmartArt and charts are not addressable yet — their SVG text carries no
-`data-e2p-shape`, so the canvas never offers them for editing.
+Scope: plain shapes (`p:sp`, including inside groups) and table cells
+(`data-e2p-table` + `data-e2p-cell="row,col"` → the edit carries row/col).
+SmartArt and charts are not addressable — their SVG text carries no edit
+tags, so the canvas never offers them for editing.
 """
 
 from __future__ import annotations
@@ -33,10 +34,16 @@ class TextEdit(ToolRequest):
         default=None,
         description=(
             "Optional optimistic-concurrency guard: current paragraph text as "
-            "the client last saw it. On mismatch the edit is rejected with "
-            "status='stale' so the client can refresh its preview."
+            "the client last saw it (whitespace-normalized before comparing). "
+            "On mismatch the edit is rejected with status='stale' so the "
+            "client can refresh its preview."
         ),
     )
+    # Table-cell addressing: when set, shape_id must be a graphicFrame table
+    # and the paragraph lives in table.cell(row, col). The preview SVG tags
+    # these as data-e2p-table + data-e2p-cell="row,col".
+    row: int | None = Field(default=None, ge=0)
+    col: int | None = Field(default=None, ge=0)
 
 
 class TextEditResult(ToolResponse):
@@ -92,6 +99,16 @@ def apply_text_edits(req: ApplyTextEditsRequest) -> ApplyTextEditsResponse:
     )
 
 
+def _normalize(text: str) -> str:
+    """Whitespace-insensitive comparison key.
+
+    The preview SVG reconstructs paragraph text from rendered tspans
+    (wrapped lines, soft breaks), so exact string equality with the OOXML
+    runs is too strict a staleness signal — collapse all whitespace.
+    """
+    return " ".join(text.split())
+
+
 def _apply_one(prs: Presentation, edit: TextEdit) -> TextEditResult:
     if edit.slide >= len(prs.slides):
         return TextEditResult(
@@ -108,28 +125,62 @@ def _apply_one(prs: Presentation, edit: TextEdit) -> TextEditResult:
         if sh.shape_id == edit.shape_id:
             shape = sh
             break
-    if shape is None or not getattr(shape, "has_text_frame", False):
+    if shape is None:
         return TextEditResult(
             slide=edit.slide,
             shape_id=edit.shape_id,
             para=edit.para,
             status="shape_not_found",
-            message=f"no text shape with id={edit.shape_id} on slide {edit.slide}",
+            message=f"no shape with id={edit.shape_id} on slide {edit.slide}",
         )
 
-    paragraphs = shape.text_frame.paragraphs
+    # Resolve the text frame: table cell or plain shape.
+    if edit.row is not None and edit.col is not None:
+        if not getattr(shape, "has_table", False):
+            return TextEditResult(
+                slide=edit.slide,
+                shape_id=edit.shape_id,
+                para=edit.para,
+                status="shape_not_found",
+                message=f"shape id={edit.shape_id} is not a table",
+            )
+        table = shape.table
+        if edit.row >= len(table.rows) or edit.col >= len(table.columns):
+            return TextEditResult(
+                slide=edit.slide,
+                shape_id=edit.shape_id,
+                para=edit.para,
+                status="shape_not_found",
+                message=(
+                    f"cell ({edit.row},{edit.col}) out of range — table is "
+                    f"{len(table.rows)}x{len(table.columns)}"
+                ),
+            )
+        text_frame = table.cell(edit.row, edit.col).text_frame
+    else:
+        if not getattr(shape, "has_text_frame", False):
+            return TextEditResult(
+                slide=edit.slide,
+                shape_id=edit.shape_id,
+                para=edit.para,
+                status="shape_not_found",
+                message=f"shape id={edit.shape_id} has no text frame",
+            )
+        text_frame = shape.text_frame
+
+    paragraphs = text_frame.paragraphs
     if edit.para >= len(paragraphs):
         return TextEditResult(
             slide=edit.slide,
             shape_id=edit.shape_id,
             para=edit.para,
             status="para_not_found",
-            message=f"shape has {len(paragraphs)} paragraphs",
+            message=f"target has {len(paragraphs)} paragraphs",
         )
     paragraph = paragraphs[edit.para]
 
     current = "".join(run.text for run in paragraph.runs)
-    if edit.old_text is not None and current != edit.old_text:
+    if edit.old_text is not None and _normalize(current) != _normalize(edit.old_text):
         return TextEditResult(
             slide=edit.slide,
             shape_id=edit.shape_id,
